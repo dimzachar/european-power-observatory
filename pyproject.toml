@@ -1,0 +1,29 @@
+[project]
+name = "european-renewable-energy-analytics"
+version = "0.1.0"
+description = "Local development environment for the European Renewable Energy Analytics Platform."
+readme = "README.md"
+requires-python = ">=3.10,<3.13"
+dependencies = [
+  "cdsapi>=0.7.0",
+  "dbt-bigquery>=1.8.0",
+  "google-cloud-storage>=2.10.0",
+  "lxml>=4.9.0",
+  "netCDF4>=1.6.0",
+  "numpy>=1.26.0",
+  "pandas>=2.0.0",
+  "pyarrow>=12.0.0",
+  "pyspark>=4.1.1",
+  "python-dotenv>=1.0.0",
+  "requests>=2.31.0",
+  "xarray>=2023.0.0",
+]
+
+[dependency-groups]
+dev = [
+  "ipykernel>=6.29.0",
+  "jupyterlab>=4.2.0",
+]
+
+[tool.uv]
+package = false
