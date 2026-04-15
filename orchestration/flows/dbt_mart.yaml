@@ -1,0 +1,70 @@
+id: dbt_mart
+namespace: european_energy
+
+description: |
+  Seed dbt dimensions, then build and test intermediate and mart models in the
+  `european_energy` BigQuery dataset. Intended to run after `dbt_quality`.
+
+tasks:
+  - id: seed_build_and_test_marts
+    type: io.kestra.plugin.scripts.python.Script
+    taskRunner:
+      type: io.kestra.plugin.core.runner.Process
+    env:
+      GCP_SERVICE_ACCOUNT: "{{ secret('GCP_SERVICE_ACCOUNT') }}"
+      GCP_PROJECT_ID: "{{ kv('GCP_PROJECT_ID') }}"
+      GCP_LOCATION: "{{ kv('GCP_LOCATION') }}"
+      GCP_BUCKET_NAME: "{{ kv('GCP_BUCKET_NAME') }}"
+      GCP_DATASET: "{{ kv('GCP_DATASET') }}"
+    script: |
+      import json
+      import os
+      import subprocess
+      import sys
+      import tempfile
+
+
+      def run(cmd, env=None):
+          result = subprocess.run(cmd, capture_output=True, text=True, env=env)
+          print(result.stdout)
+          if result.returncode != 0:
+              print(result.stderr, file=sys.stderr)
+              sys.exit(result.returncode)
+
+
+      run([
+          "/bin/sh",
+          "-c",
+          (
+              "set -e\n"
+              "uv pip install --system dbt-bigquery "
+              "|| python -m pip install --user --no-cache-dir dbt-bigquery"
+          ),
+      ])
+
+      credentials_info = json.loads(os.environ["GCP_SERVICE_ACCOUNT"])
+
+      with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as handle:
+          json.dump(credentials_info, handle)
+          keyfile_path = handle.name
+
+      dbt_env = os.environ.copy()
+      dbt_env["GCP_SERVICE_ACCOUNT_PATH"] = keyfile_path
+      dbt_env["GOOGLE_APPLICATION_CREDENTIALS"] = keyfile_path
+      dbt_env["GCS_BUCKET"] = os.environ["GCP_BUCKET_NAME"]
+      dbt_project_dir = os.environ["DBT_PROJECT_DIR"]
+
+      run(["dbt", "deps", "--profiles-dir", dbt_project_dir, "--project-dir", dbt_project_dir], env=dbt_env)
+      run(["dbt", "seed", "--profiles-dir", dbt_project_dir, "--project-dir", dbt_project_dir], env=dbt_env)
+      run(["dbt", "run", "--profiles-dir", dbt_project_dir, "--project-dir", dbt_project_dir, "--select", "tag:intermediate tag:mart"], env=dbt_env)
+      run(["dbt", "test", "--profiles-dir", dbt_project_dir, "--project-dir", dbt_project_dir, "--select", "tag:mart"], env=dbt_env)
+
+      print("dbt seeds, intermediate models, mart models, and mart tests completed successfully.")
+
+pluginDefaults:
+  - type: io.kestra.plugin.gcp
+    values:
+      serviceAccount: "{{ secret('GCP_SERVICE_ACCOUNT') }}"
+      projectId: "{{ kv('GCP_PROJECT_ID') }}"
+      location: "{{ kv('GCP_LOCATION') }}"
+      bucket: "{{ kv('GCP_BUCKET_NAME') }}"

@@ -1,0 +1,59 @@
+sources:
+  - name: raw
+    description: Raw energy and weather data from ENTSO-E and ERA5 sources
+    database: "{{ env_var('GCP_PROJECT_ID') }}"
+    schema: "{{ var('dataset', 'european_energy') }}"
+    tables:
+      - name: entsoe_generation
+        identifier: raw_entsoe_generation
+        external:
+          location: "gs://{{ env_var('GCS_BUCKET', 'renewable-energy-europe') }}/silver/entsoe/"
+          data_format: PARQUET
+          metadata_cache_max_age: 60
+          max_staleness: INTERVAL 7 DAY
+        description: ENTSO-E actual generation and forecast data (MW by source, hourly)
+        columns:
+          - name: timestamp
+            description: "Hourly timestamp of the observation"
+            data_tests:
+              - not_null
+          - name: country
+            description: "ENTSO-E country code (e.g., FR, GR, DE)"
+          - name: energy_source
+            description: "Energy source type (Wind, Solar, Nuclear, Fossil Gas, etc.)"
+          - name: psr_type
+            description: "ENTSO-E PsrType code from the official Transparency Platform list (for example B02, B04, B16, B19)"
+          - name: actual_MW
+            description: "Actual generation in megawatts"
+          - name: forecast_MW
+            description: "Day-ahead forecast generation in megawatts"
+          - name: domain
+            description: "Data domain (generation or forecast)"
+        config:
+          loaded_at_field: timestamp
+
+      - name: era5_weather
+        identifier: raw_era5_weather
+        external:
+          location: "gs://{{ env_var('GCS_BUCKET', 'renewable-energy-europe') }}/silver/era5/"
+          data_format: PARQUET
+          metadata_cache_max_age: 60
+          max_staleness: INTERVAL 7 DAY
+        description: ERA5 reanalysis weather data (wind, solar, temperature, cloud cover at grid level)
+        columns:
+          - name: timestamp
+            description: "Hourly timestamp of the observation"
+            data_tests:
+              - not_null
+          - name: lat
+            description: "Grid cell latitude"
+          - name: lon
+            description: "Grid cell longitude"
+          - name: variable
+            description: "Weather variable name (wind_100m_u, wind_100m_v, ssrd, t2m, tcc)"
+          - name: value
+            description: "Variable value at this grid cell and time"
+          - name: country
+            description: "Country this grid cell belongs to"
+        config:
+          loaded_at_field: timestamp

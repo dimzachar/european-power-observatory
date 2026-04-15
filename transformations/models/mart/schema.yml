@@ -1,0 +1,25 @@
+models:
+  - name: fct_renewable_kpi
+    description: |
+      Daily renewable energy share percentage per country.
+      Answers: "How green did each country get today/this month/this year?"
+      This is the primary dashboard KPI — renewable % of total generation.
+    columns:
+      - name: date_key
+        description: Date of aggregation
+        data_tests:
+          - not_null
+      - name: country_code
+        description: ENTSO-E country code
+      - name: country_name
+        description: Human-readable country name
+      - name: renewable_pct
+        description: Renewable energy as percentage of total generation
+      - name: renewable_mwh
+        description: Total renewable generation in MWh
+      - name: total_mwh
+        description: Total generation from all sources in MWh
+      - name: renewable_sources_active
+        description: Count of renewable sources with non-zero generation
+      - name: total_sources_active
+        description: Count of all energy sources with non-zero generation

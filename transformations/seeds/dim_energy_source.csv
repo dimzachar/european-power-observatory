@@ -1,0 +1,21 @@
+energy_source,psr_code,fuel_category,is_renewable,emission_factor_gco2_kwh
+Biomass,B01,Renewable,true,230
+Fossil Brown coal/Lignite,B02,Fossil,false,1090
+Fossil Coal-derived gas,B03,Fossil,false,427
+Fossil Gas,B04,Fossil,false,427
+Fossil Hard coal,B05,Fossil,false,850
+Fossil Oil,B06,Fossil,false,730
+Fossil Oil shale,B07,Fossil,false,730
+Fossil Peat,B08,Fossil,false,1033
+Geothermal,B09,Renewable,true,38
+Hydro Pumped Storage,B10,Renewable,true,0
+Hydro Run-of-river and poundage,B11,Renewable,true,0
+Hydro Water Reservoir,B12,Renewable,true,0
+Marine,B13,Renewable,true,0
+Nuclear,B14,Nuclear,false,12
+Other renewable,B15,Renewable,true,0
+Solar,B16,Renewable,true,0
+Waste,B17,Other,false,230
+Wind Offshore,B18,Renewable,true,0
+Wind Onshore,B19,Renewable,true,0
+Other,B20,Other,false,0

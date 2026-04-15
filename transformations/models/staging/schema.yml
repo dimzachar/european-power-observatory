@@ -1,0 +1,69 @@
+models:
+  - name: stg_entsoe__generation
+    description: |
+      Staging model for ENTSO-E generation data. Standardizes column names,
+      filters for Greece, and computes basic derived fields like forecast_error_pct.
+    columns:
+      - name: ts_hour
+        description: Hourly timestamp
+        data_tests:
+          - not_null
+      - name: country_code
+        description: ENTSO-E country code (GR for Greece)
+        data_tests:
+          - not_null
+      - name: country_name
+        description: Human-readable country name
+      - name: date_key
+        description: Date portion of timestamp
+      - name: hour_of_day
+        description: Hour (0-23)
+      - name: month_of_year
+        description: Month (1-12)
+      - name: energy_source
+        description: Readable energy source name (Wind, Solar, etc.)
+      - name: psr_code
+        description: ENTSO-E PsrType code from the official Transparency Platform list (for example B02, B04, B16, B19)
+      - name: actual_mw
+        description: Actual generation in megawatts
+      - name: forecast_mw
+        description: Day-ahead forecast generation in megawatts
+      - name: generation_mw
+        description: Unified generation value (prefers actual, falls back to forecast)
+      - name: forecast_error_pct
+        description: Absolute forecast error as percentage
+
+  - name: stg_era5__wind
+    description: |
+      Staging model for ERA5 wind data. Pivots u/v components and
+      computes wind speed and direction.
+    columns:
+      - name: ts_hour
+        description: Hourly timestamp
+        data_tests:
+          - not_null
+      - name: lat
+        description: Grid cell latitude
+      - name: lon
+        description: Grid cell longitude
+      - name: country_code
+        description: ENTSO-E country code
+      - name: wind_speed_100m
+        description: Wind speed at 100m (m/s), computed from u/v components
+      - name: wind_direction_degrees
+        description: Wind direction in degrees
+
+  - name: stg_era5__solar
+    description: |
+      Staging model for ERA5 solar and temperature data.
+    columns:
+      - name: ts_hour
+        description: Hourly timestamp
+        data_tests:
+          - not_null
+      - name: solar_radiation_wm2
+        description: Surface solar radiation (W/m2), converted from J/m2
+      - name: temp_2m_celsius
+        description: 2-meter temperature converted from Kelvin to Celsius
+      - name: cloud_cover_fraction
+        description: Total cloud cover (0-1)

@@ -1,0 +1,12 @@
+european_energy:
+  target: dev
+  outputs:
+    dev:
+      type: bigquery
+      method: "{{ 'service-account' if env_var('GCP_SERVICE_ACCOUNT_PATH', env_var('GOOGLE_APPLICATION_CREDENTIALS', '')) else 'oauth' }}"
+      keyfile: "{{ env_var('GCP_SERVICE_ACCOUNT_PATH', env_var('GOOGLE_APPLICATION_CREDENTIALS', '')) }}"
+      project: "{{ env_var('GCP_PROJECT_ID') }}"
+      dataset: european_energy
+      threads: 4
+      timeout_seconds: 300
+      location: europe-west4
