@@ -1,0 +1,78 @@
+id: daily_pipeline
+namespace: european_energy
+
+description: |
+  Daily Greece end-to-end pipeline.
+  Runs bronze ingestion, silver refresh, raw external table refresh, dbt staging,
+  and dbt mart builds for one completed day of data.
+  The schedule processes the previous calendar day to avoid partial-day ingestion.
+
+inputs:
+  - id: date
+    type: DATE
+    defaults: "2025-03-01"
+
+  - id: country
+    type: STRING
+    defaults: "GR"
+
+tasks:
+  - id: set_labels
+    type: io.kestra.plugin.core.execution.Labels
+    labels:
+      pipeline: daily
+      country: "{{ inputs.country }}"
+      date: "{{ inputs.date }}"
+
+  - id: entsoe_ingest_day
+    type: io.kestra.plugin.core.flow.Subflow
+    namespace: european_energy
+    flowId: entsoe_ingest
+    wait: true
+    transmitFailed: true
+    inputs:
+      start_date: "{{ inputs.date }}"
+      end_date: "{{ (inputs.date | dateAdd(1, 'DAYS')) | date('yyyy-MM-dd') }}"
+      country: "{{ inputs.country }}"
+
+  - id: era5_ingest_day
+    type: io.kestra.plugin.core.flow.Subflow
+    namespace: european_energy
+    flowId: era5_ingest
+    wait: true
+    transmitFailed: true
+    inputs:
+      date: "{{ inputs.date }}"
+      country: "{{ inputs.country }}"
+
+  - id: refresh_silver
+    type: io.kestra.plugin.core.flow.Subflow
+    namespace: european_energy
+    flowId: spark_transform
+    wait: true
+    transmitFailed: true
+    inputs:
+      country: "{{ inputs.country }}"
+      date_range: "{{ inputs.date }}/{{ inputs.date }}"
+
+  - id: validate_staging
+    type: io.kestra.plugin.core.flow.Subflow
+    namespace: european_energy
+    flowId: dbt_quality
+    wait: true
+    transmitFailed: true
+
+  - id: build_marts
+    type: io.kestra.plugin.core.flow.Subflow
+    namespace: european_energy
+    flowId: dbt_mart
+    wait: true
+    transmitFailed: true
+
+triggers:
+  - id: daily_completed_day
+    type: io.kestra.plugin.core.trigger.Schedule
+    cron: "0 7 * * *"
+    inputs:
+      date: "{{ (trigger.date | dateAdd(-1, 'DAYS')) | date('yyyy-MM-dd') }}"
+      country: "GR"

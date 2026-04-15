@@ -7,6 +7,8 @@ description: |
   ENTSO-E API key required in Kestra secrets as ENTSOE_API_KEY.
   Data source: https://transparency.entsoe.eu/api
   Auth: Request API token via transparency@entsoe.eu
+  This flow is intended to be called by top-level automation flows such as
+  `daily_pipeline` and `backfill_pipeline`.
 
 inputs:
   - id: start_date
@@ -108,11 +110,3 @@ pluginDefaults:
       projectId: "{{kv('GCP_PROJECT_ID')}}"
       location: "{{kv('GCP_LOCATION')}}"
       bucket: "{{kv('GCP_BUCKET_NAME')}}"
-
-triggers:
-  - id: daily_entsoe
-    type: io.kestra.plugin.core.trigger.Schedule
-    cron: "0 6 */2 * *"
-    inputs:
-      start_date: "{{trigger.date | date('yyyy-MM-dd') }}"
-      end_date: "{{ (trigger.date | date('yyyy-MM-dd') | dateAdd(1, 'DAYS')) | date('yyyy-MM-dd') }}"

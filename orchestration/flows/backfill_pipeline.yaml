@@ -1,0 +1,76 @@
+id: backfill_pipeline
+namespace: european_energy
+
+description: |
+  Manual Greece backfill pipeline.
+  Accepts a JSON array of dates, ingests bronze data for each day, then runs one
+  country-level silver refresh and one dbt warehouse refresh at the end.
+  Example dates_json:
+  ["2025-03-01", "2025-03-02", "2025-03-03"]
+
+inputs:
+  - id: dates_json
+    type: STRING
+    defaults: "[\"2025-03-01\", \"2025-03-02\"]"
+
+  - id: country
+    type: STRING
+    defaults: "GR"
+
+tasks:
+  - id: set_labels
+    type: io.kestra.plugin.core.execution.Labels
+    labels:
+      pipeline: backfill
+      country: "{{ inputs.country }}"
+      dates_json: "{{ inputs.dates_json }}"
+
+  - id: ingest_days
+    type: io.kestra.plugin.core.flow.ForEach
+    values: "{{ fromJson(inputs.dates_json) }}"
+    concurrencyLimit: 1
+    tasks:
+      - id: entsoe_ingest_day
+        type: io.kestra.plugin.core.flow.Subflow
+        namespace: european_energy
+        flowId: entsoe_ingest
+        wait: true
+        transmitFailed: true
+        inputs:
+          start_date: "{{ taskrun.value }}"
+          end_date: "{{ (taskrun.value | dateAdd(1, 'DAYS')) | date('yyyy-MM-dd') }}"
+          country: "{{ inputs.country }}"
+
+      - id: era5_ingest_day
+        type: io.kestra.plugin.core.flow.Subflow
+        namespace: european_energy
+        flowId: era5_ingest
+        wait: true
+        transmitFailed: true
+        inputs:
+          date: "{{ taskrun.value }}"
+          country: "{{ inputs.country }}"
+
+  - id: refresh_silver
+    type: io.kestra.plugin.core.flow.Subflow
+    namespace: european_energy
+    flowId: spark_transform
+    wait: true
+    transmitFailed: true
+    inputs:
+      country: "{{ inputs.country }}"
+      date_range: "{{ inputs.dates_json }}"
+
+  - id: validate_staging
+    type: io.kestra.plugin.core.flow.Subflow
+    namespace: european_energy
+    flowId: dbt_quality
+    wait: true
+    transmitFailed: true
+
+  - id: build_marts
+    type: io.kestra.plugin.core.flow.Subflow
+    namespace: european_energy
+    flowId: dbt_mart
+    wait: true
+    transmitFailed: true
