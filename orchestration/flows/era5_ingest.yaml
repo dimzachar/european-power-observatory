@@ -1,0 +1,160 @@
+id: era5_ingest
+namespace: european_energy
+
+description: |
+  Fetch ERA5 reanalysis data from Copernicus CDS for Greece bounding box.
+  Variables: wind speed (100m), surface solar radiation, 2m temperature, cloud cover, precipitation.
+  Saves NetCDF to GCS bronze/era5/GR/YYYY/MM/.
+  Requires: CDSAPI key in environment (~/.cdsapirc) or via secret.
+
+inputs:
+  - id: date
+    type: DATE
+    defaults: "2025-03-01"
+
+  - id: country
+    type: STRING
+    defaults: "GR"
+
+variables:
+  date_year: "{{inputs.date | date('yyyy')}}"
+  date_month: "{{inputs.date | date('MM')}}"
+  date_day: "{{inputs.date | date('dd')}}"
+  bronze_dir: "gs://{{kv('GCP_BUCKET_NAME')}}/bronze/era5/{{inputs.country}}/{{vars.date_year}}/{{vars.date_month}}/"
+  # Greece bounding box
+  area: "41.5,19.0,34.5,29.5"  # N, W, S, E
+
+tasks:
+  - id: fetch_era5
+    type: io.kestra.plugin.scripts.python.Script
+    taskRunner:
+      type: io.kestra.plugin.core.runner.Process
+    outputFiles:
+      - "*.nc"
+    env:
+      CDSAPI_URL: "{{kv('CDSAPI_URL')}}"
+      CDSAPI_KEY: "{{secret('CDSAPI_KEY')}}"
+    script: |
+      import os, sys, subprocess, site
+      from pathlib import Path
+
+      try:
+          import cdsapi
+      except ModuleNotFoundError:
+          # Prefer uv (available in your Kestra runtime), fallback to pip.
+          try:
+              subprocess.check_call(["uv", "pip", "install", "--system", "cdsapi"])
+          except Exception:
+              subprocess.check_call([sys.executable, "-m", "pip", "install", "--user", "--no-cache-dir", "cdsapi"])
+              user_site = site.getusersitepackages()
+              if user_site not in sys.path:
+                  sys.path.append(user_site)
+          import cdsapi
+
+      url = os.environ.get("CDSAPI_URL", "https://cds.climate.copernicus.eu/api")
+      key = os.environ.get("CDSAPI_KEY", "")
+      client = cdsapi.Client(url=url, key=key)
+
+      date = "{{inputs.date}}"
+      country = "{{inputs.country}}"
+      year = date[:4]
+      month = date[5:7]
+      day = date[8:10]
+      grid_lat = (41.5, 34.5)  # N-S for Greece
+      grid_lon = (19.0, 29.0)  # W-E
+
+      output_dir = Path(".")
+      output_dir.mkdir(parents=True, exist_ok=True)
+
+      # Fetch wind data
+      print("Fetching wind (100m u, v components)...")
+      out_wind = output_dir / f"{date}_wind.nc"
+      if out_wind.exists():
+          print("  [SKIP] Wind already exists")
+      else:
+          client.retrieve(
+              "reanalysis-era5-single-levels",
+              {
+                  "product_type": ["reanalysis"],
+                  "variable": [
+                      "100m_u_component_of_wind",
+                      "100m_v_component_of_wind",
+                  ],
+                  "year": year, "month": month, "day": day,
+                  "time": [f"{h:02d}:00" for h in range(24)],
+                  "data_format": "netcdf",
+                  "area": [grid_lat[0], grid_lon[0], grid_lat[1], grid_lon[1]],
+              },
+              str(out_wind)
+          )
+          print(f"  Saved: {out_wind}")
+
+      # Fetch solar data
+      print("Fetching solar (surface solar radiation downwards)...")
+      out_solar = output_dir / f"{date}_solar.nc"
+      if out_solar.exists():
+          print("  [SKIP] Solar already exists")
+      else:
+          client.retrieve(
+              "reanalysis-era5-single-levels",
+              {
+                  "product_type": ["reanalysis"],
+                  "variable": [
+                      "surface_solar_radiation_downwards",
+                  ],
+                  "year": year, "month": month, "day": day,
+                  "time": [f"{h:02d}:00" for h in range(24)],
+                  "data_format": "netcdf",
+                  "area": [grid_lat[0], grid_lon[0], grid_lat[1], grid_lon[1]],
+              },
+              str(out_solar)
+          )
+          print(f"  Saved: {out_solar}")
+
+      # Fetch temperature
+      print("Fetching temperature (2m)...")
+      out_temp = output_dir / f"{date}_temp.nc"
+      if out_temp.exists():
+          print("  [SKIP] Temperature already exists")
+      else:
+          client.retrieve(
+              "reanalysis-era5-single-levels",
+              {
+                  "product_type": ["reanalysis"],
+                  "variable": [
+                      "2m_temperature",
+                  ],
+                  "year": year, "month": month, "day": day,
+                  "time": [f"{h:02d}:00" for h in range(24)],
+                  "data_format": "netcdf",
+                  "area": [grid_lat[0], grid_lon[0], grid_lat[1], grid_lon[1]],
+              },
+              str(out_temp)
+          )
+          print(f"  Saved: {out_temp}")
+
+  - id: upload_wind_to_gcs
+    type: io.kestra.plugin.gcp.gcs.Upload
+    from: "{{outputs.fetch_era5.outputFiles[inputs.date ~ '_wind.nc']}}"
+    to: "{{render(vars.bronze_dir)}}{{inputs.date}}_wind.nc"
+
+  - id: upload_solar_to_gcs
+    type: io.kestra.plugin.gcp.gcs.Upload
+    from: "{{outputs.fetch_era5.outputFiles[inputs.date ~ '_solar.nc']}}"
+    to: "{{render(vars.bronze_dir)}}{{inputs.date}}_solar.nc"
+
+  - id: upload_temp_to_gcs
+    type: io.kestra.plugin.gcp.gcs.Upload
+    from: "{{outputs.fetch_era5.outputFiles[inputs.date ~ '_temp.nc']}}"
+    to: "{{render(vars.bronze_dir)}}{{inputs.date}}_temp.nc"
+
+  - id: purge_files
+    type: io.kestra.plugin.core.storage.PurgeCurrentExecutionFiles
+
+pluginDefaults:
+  - type: io.kestra.plugin.gcp
+    values:
+      serviceAccount: "{{secret('GCP_SERVICE_ACCOUNT')}}"
+      projectId: "{{kv('GCP_PROJECT_ID')}}"
+      location: "{{kv('GCP_LOCATION')}}"
+      bucket: "{{kv('GCP_BUCKET_NAME')}}"

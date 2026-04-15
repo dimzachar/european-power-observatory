@@ -1,0 +1,135 @@
+"""Fetch ERA5 weather data locally into bronze storage.
+
+This local helper mirrors the current working Kestra MVP flow:
+- categories: wind, solar, temp
+- one NetCDF file per day/category
+- writes to:
+  bronze/era5/{country}/{year}/{month}/{date}_{category}.nc
+
+The script is local-first: it writes to the repository's `bronze/` mirror
+and does not upload to GCS.
+"""
+
+from __future__ import annotations
+
+import os
+import sys
+from datetime import datetime, timedelta
+from pathlib import Path
+
+import cdsapi
+from dotenv import load_dotenv
+
+load_dotenv()
+
+OUTPUT_DIR = Path("bronze/era5")
+DATASET = "reanalysis-era5-single-levels"
+
+# Greece-first MVP bounding box: north, west, south, east
+AREA_BY_COUNTRY = {
+    "GR": [41.5, 19.0, 34.5, 29.0],
+}
+
+CATEGORY_VARIABLES = {
+    "wind": [
+        "100m_u_component_of_wind",
+        "100m_v_component_of_wind",
+    ],
+    "solar": [
+        "surface_solar_radiation_downwards",
+    ],
+    "temp": [
+        "2m_temperature",
+    ],
+}
+
+
+def env_first(*names: str, default: str = "") -> str:
+    for name in names:
+        value = os.environ.get(name)
+        if value:
+            return value
+    return default
+
+
+def daterange(start_date: str, end_date: str):
+    start_dt = datetime.strptime(start_date, "%Y-%m-%d")
+    end_dt = datetime.strptime(end_date, "%Y-%m-%d")
+    current = start_dt
+    while current < end_dt:
+        yield current
+        current += timedelta(days=1)
+
+
+def build_client() -> cdsapi.Client:
+    url = env_first("CDSAPI_URL", default="https://cds.climate.copernicus.eu/api")
+    key = env_first("CDSAPI_KEY")
+    if key:
+        return cdsapi.Client(url=url, key=key)
+    return cdsapi.Client(url=url)
+
+
+def fetch_day(client: cdsapi.Client, country: str, current_dt: datetime) -> bool:
+    area = AREA_BY_COUNTRY.get(country)
+    if area is None:
+        print(f"[ERROR] No ERA5 area configured for country={country}")
+        return False
+
+    date_str = current_dt.strftime("%Y-%m-%d")
+    year = current_dt.strftime("%Y")
+    month = current_dt.strftime("%m")
+    day = current_dt.strftime("%d")
+
+    out_dir = OUTPUT_DIR / country / year / month
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    failed = False
+    for category, variables in CATEGORY_VARIABLES.items():
+        out_file = out_dir / f"{date_str}_{category}.nc"
+        if out_file.exists():
+            print(f"[SKIP] {out_file}")
+            continue
+
+        print(f"[ERA5] Fetching {category} for {country} on {date_str}")
+        try:
+            client.retrieve(
+                DATASET,
+                {
+                    "product_type": ["reanalysis"],
+                    "variable": variables,
+                    "year": year,
+                    "month": month,
+                    "day": day,
+                    "time": [f"{hour:02d}:00" for hour in range(24)],
+                    "data_format": "netcdf",
+                    "area": area,
+                },
+                str(out_file),
+            )
+            print(f"[OK] Saved {out_file}")
+        except Exception as exc:
+            print(f"[ERROR] Failed {category} for {date_str}: {exc}")
+            failed = True
+
+    return not failed
+
+
+def main() -> int:
+    country = env_first("COUNTRY", default="GR")
+    start_date = env_first("DATE_START", "START_DATE", default="2025-03-01")
+    end_date = env_first("DATE_END", "END_DATE", default="2025-03-02")
+
+    print(f"\n{'=' * 60}")
+    print(f"ERA5 local fetch | country={country} | start={start_date} | end={end_date}")
+    print(f"{'=' * 60}\n")
+
+    client = build_client()
+    failed = False
+    for current_dt in daterange(start_date, end_date):
+        failed = (not fetch_day(client, country, current_dt)) or failed
+
+    return 1 if failed else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

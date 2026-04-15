@@ -1,0 +1,118 @@
+id: entsoe_ingest
+namespace: european_energy
+
+description: |
+  Fetch ENTSO-E actual generation data for Greece from the transparency API.
+  Saves raw XML responses to GCS bronze storage.
+  ENTSO-E API key required in Kestra secrets as ENTSOE_API_KEY.
+  Data source: https://transparency.entsoe.eu/api
+  Auth: Request API token via transparency@entsoe.eu
+
+inputs:
+  - id: start_date
+    type: DATE
+    defaults: "2025-03-01"
+  - id: end_date
+    type: DATE
+    defaults: "2025-03-02"
+  - id: country
+    type: STRING
+    defaults: "GR"
+
+variables:
+  output_file: "gs://{{kv('GCP_BUCKET_NAME')}}/bronze/entsoe/{{inputs.country}}/generation/{{inputs.start_date}}/generation.xml"
+
+tasks:
+  - id: fetch_generation
+    type: io.kestra.plugin.scripts.python.Script
+    taskRunner:
+      type: io.kestra.plugin.core.runner.Process
+    outputFiles:
+      - "*.xml"
+    env:
+      ENTSOE_API_KEY: "{{secret('ENTSOE_API_KEY')}}"
+      COUNTRY: "{{inputs.country}}"
+      DATE_START: "{{inputs.start_date}}"
+      DATE_END: "{{inputs.end_date}}"
+    script: |
+      import os, sys, subprocess, site
+      import xml.etree.ElementTree as ET
+      from pathlib import Path
+
+      try:
+          import requests
+      except ModuleNotFoundError:
+          try:
+              subprocess.check_call(["uv", "pip", "install", "--system", "requests"])
+          except Exception:
+              subprocess.check_call([sys.executable, "-m", "pip", "install", "--user", "--no-cache-dir", "requests"])
+              user_site = site.getusersitepackages()
+              if user_site not in sys.path:
+                  sys.path.append(user_site)
+          import requests
+
+      api_key = os.environ["ENTSOE_API_KEY"]
+      country = os.environ["COUNTRY"]
+      domain_map = {
+          "GR": "10YGR-HTSO-----Y",
+      }
+      domain = domain_map.get(country, country)
+      start = os.environ["DATE_START"].replace("-", "")
+      end = os.environ["DATE_END"].replace("-", "")
+
+      params = {
+          "documentType": "A75",
+          "processType": "A16",
+          "in_Domain": domain,
+          "periodStart": f"{start}0000",
+          "periodEnd": f"{end}0000",
+          "securityToken": api_key,
+      }
+
+      resp = requests.get("https://web-api.tp.entsoe.eu/api", params=params, timeout=120)
+      is_generation_doc = "<GL_MarketDocument" in resp.text
+      is_ack_doc = "<Acknowledgement_MarketDocument" in resp.text
+
+      if resp.status_code == 200 and is_generation_doc and not is_ack_doc:
+          output_dir = Path(".")
+          output_dir.mkdir(parents=True, exist_ok=True)
+          out_file = output_dir / "generation.xml"
+          out_file.write_text(resp.text, encoding="utf-8")
+          print(f"Saved: {out_file} ({len(resp.text)} bytes)")
+      else:
+          print(f"Failed: HTTP {resp.status_code}")
+          print(resp.text[:500])
+          try:
+              root = ET.fromstring(resp.text)
+              reason_code = root.find(".//{*}Reason/{*}code")
+              reason_text = root.find(".//{*}Reason/{*}text")
+              if reason_code is not None or reason_text is not None:
+                  print(
+                      "ENTSO-E reason:"
+                      f" code={reason_code.text if reason_code is not None else 'n/a'}"
+                      f" text={reason_text.text if reason_text is not None else 'n/a'}"
+                  )
+          except Exception:
+              pass
+          sys.exit(1)
+
+  - id: upload_to_gcs
+    type: io.kestra.plugin.gcp.gcs.Upload
+    from: "{{outputs.fetch_generation.outputFiles['generation.xml']}}"
+    to: "{{render(vars.output_file)}}"
+
+pluginDefaults:
+  - type: io.kestra.plugin.gcp
+    values:
+      serviceAccount: "{{secret('GCP_SERVICE_ACCOUNT')}}"
+      projectId: "{{kv('GCP_PROJECT_ID')}}"
+      location: "{{kv('GCP_LOCATION')}}"
+      bucket: "{{kv('GCP_BUCKET_NAME')}}"
+
+triggers:
+  - id: daily_entsoe
+    type: io.kestra.plugin.core.trigger.Schedule
+    cron: "0 6 */2 * *"
+    inputs:
+      start_date: "{{trigger.date | date('yyyy-MM-dd') }}"
+      end_date: "{{ (trigger.date | date('yyyy-MM-dd') | dateAdd(1, 'DAYS')) | date('yyyy-MM-dd') }}"
