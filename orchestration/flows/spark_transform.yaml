@@ -1,0 +1,313 @@
+id: spark_transform
+namespace: european_energy
+
+description: |
+  Transform raw ENTSO-E XML and ERA5 NetCDF into clean Parquet on GCS silver.
+  This flow currently uses Python-based transforms for reliability in the local Kestra runtime.
+  Steps:
+  1. Parse ENTSO-E XML → structured Parquet (silver/entsoe/)
+  2. Convert ERA5 NetCDF → flat tabular Parquet (silver/era5/)
+  3. Aggregate ERA5 grid cells to country-level (silver/era5_aggregated/)
+  Triggered after era5_ingest and entsoe_ingest complete.
+
+inputs:
+  - id: country
+    type: STRING
+    defaults: "GR"
+
+  - id: date_range
+    type: STRING
+    defaults: "2025-03-01/2025-03-07"
+
+tasks:
+  - id: set_labels
+    type: io.kestra.plugin.core.execution.Labels
+    labels:
+      country: "{{inputs.country}}"
+      date_range: "{{inputs.date_range}}"
+
+  - id: entsoe_xml_to_parquet
+    type: io.kestra.plugin.scripts.python.Script
+    taskRunner:
+      type: io.kestra.plugin.core.runner.Process
+    beforeCommands:
+      - uv pip install --system lxml pandas pyarrow google-cloud-storage || python -m pip install --user --no-cache-dir lxml pandas pyarrow google-cloud-storage
+    env:
+      COUNTRY: "{{inputs.country}}"
+      GCS_BUCKET: "{{kv('GCP_BUCKET_NAME')}}"
+      GCP_PROJECT_ID: "{{kv('GCP_PROJECT_ID')}}"
+      GCP_SERVICE_ACCOUNT: "{{secret('GCP_SERVICE_ACCOUNT')}}"
+    script: |
+      """Parse ENTSO-E XML to Parquet and upload directly to GCS."""
+      import glob
+      import json
+      import os
+      from pathlib import Path
+
+      import pyarrow as pa
+      import pyarrow.parquet as pq
+      import pandas as pd
+      from google.cloud import storage
+      from google.oauth2 import service_account
+      from lxml import etree
+
+      bucket = os.environ["GCS_BUCKET"]
+      country = os.environ.get("COUNTRY", "GR")
+      project_id = os.environ.get("GCP_PROJECT_ID", "")
+      credentials_info = json.loads(os.environ["GCP_SERVICE_ACCOUNT"])
+      credentials = service_account.Credentials.from_service_account_info(credentials_info)
+      storage_client = storage.Client(project=project_id, credentials=credentials)
+
+      source_prefix = f"bronze/entsoe/{country}/"
+      for blob in storage_client.list_blobs(bucket, prefix=source_prefix):
+          if not blob.name.endswith(".xml"):
+              continue
+          local_path = Path(blob.name)
+          local_path.parent.mkdir(parents=True, exist_ok=True)
+          blob.download_to_filename(str(local_path))
+
+      source_map = {
+          "B01": "Biomass",
+          "B02": "Fossil Brown coal/Lignite",
+          "B03": "Fossil Coal-derived gas",
+          "B04": "Fossil Gas",
+          "B05": "Fossil Hard coal",
+          "B06": "Fossil Oil",
+          "B07": "Fossil Oil shale",
+          "B08": "Fossil Peat",
+          "B09": "Geothermal",
+          "B10": "Hydro Pumped Storage",
+          "B11": "Hydro Run-of-river and poundage",
+          "B12": "Hydro Water Reservoir",
+          "B13": "Marine",
+          "B14": "Nuclear",
+          "B15": "Other renewable",
+          "B16": "Solar",
+          "B17": "Waste",
+          "B18": "Wind Offshore",
+          "B19": "Wind Onshore",
+          "B20": "Other",
+      }
+
+      def resolve_source(code):
+          return source_map.get(code, f"Unknown ({code})")
+
+      def parse_generation_xml(xml_path):
+          tree = etree.parse(xml_path)
+          root = tree.getroot()
+          rows = []
+
+          for ts in root.xpath(".//*[local-name()='TimeSeries']"):
+              psr_type = ts.xpath(".//*[local-name()='MktPSRType']/*[local-name()='psrType']")
+              psr_code = (psr_type[0].text if psr_type else "unknown") or "unknown"
+              source_name = resolve_source(psr_code)
+
+              for period in ts.xpath(".//*[local-name()='Period']"):
+                  resolution = period.xpath(".//*[local-name()='resolution']")
+                  resolution = resolution[0] if resolution else None
+                  res_str = resolution.text if resolution is not None else "PT60M"
+                  if "15M" in res_str:
+                      interval_min = 15
+                  elif "30M" in res_str:
+                      interval_min = 30
+                  else:
+                      interval_min = 60
+
+                  start_el = period.xpath(".//*[local-name()='timeInterval']/*[local-name()='start']")
+                  start_el = start_el[0] if start_el else None
+                  if start_el is None:
+                      continue
+                  start_raw = (start_el.text or "").strip()
+                  base = pd.Timestamp(start_raw).to_pydatetime()
+
+                  for pint in period.xpath(".//*[local-name()='Point']"):
+                      position = pint.xpath(".//*[local-name()='position']")
+                      qty = pint.xpath(".//*[local-name()='quantity']")
+                      position = position[0] if position else None
+                      qty = qty[0] if qty else None
+                      if position is None or qty is None:
+                          continue
+                      try:
+                          pos_val = int(position.text)
+                          quantity = float(qty.text)
+                      except (ValueError, TypeError):
+                          continue
+                      rows.append({
+                          "timestamp": base + pd.Timedelta(minutes=interval_min * (pos_val - 1)),
+                          "country": country,
+                          "energy_source": source_name,
+                          "psr_type": psr_code,
+                          "actual_MW": quantity,
+                          "forecast_MW": None,
+                          "domain": "generation",
+                      })
+
+          return pd.DataFrame(rows)
+
+      def parse_forecast_xml(xml_path):
+          tree = etree.parse(xml_path)
+          root = tree.getroot()
+          rows = []
+
+          for ts in root.xpath(".//*[local-name()='TimeSeries']"):
+              psr_type = ts.xpath(".//*[local-name()='MktPSRType']/*[local-name()='psrType']")
+              psr_code = (psr_type[0].text if psr_type else "unknown") or "unknown"
+              source_name = resolve_source(psr_code)
+
+              for period in ts.xpath(".//*[local-name()='Period']"):
+                  start_el = period.xpath(".//*[local-name()='timeInterval']/*[local-name()='start']")
+                  start_el = start_el[0] if start_el else None
+                  if start_el is None:
+                      continue
+                  start_raw = (start_el.text or "").strip()
+                  base = pd.Timestamp(start_raw).to_pydatetime()
+
+                  for pint in period.xpath(".//*[local-name()='Point']"):
+                      position = pint.xpath(".//*[local-name()='position']")
+                      qty = pint.xpath(".//*[local-name()='quantity']")
+                      position = position[0] if position else None
+                      qty = qty[0] if qty else None
+                      if position is None or qty is None:
+                          continue
+                      try:
+                          pos_val = int(position.text)
+                          quantity = float(qty.text)
+                      except (ValueError, TypeError):
+                          continue
+                      rows.append({
+                          "timestamp": base + pd.Timedelta(hours=pos_val - 1),
+                          "country": country,
+                          "energy_source": source_name,
+                          "psr_type": psr_code,
+                          "actual_MW": None,
+                          "forecast_MW": quantity,
+                          "domain": "forecast",
+                      })
+
+          return pd.DataFrame(rows)
+
+      dataframes = []
+      for xml_path in glob.glob(f"bronze/entsoe/{country}/generation/**/*.xml", recursive=True):
+          df = parse_generation_xml(xml_path)
+          if not df.empty:
+              dataframes.append(df)
+      for xml_path in glob.glob(f"bronze/entsoe/{country}/dayahead_generation/**/*.xml", recursive=True):
+          df = parse_forecast_xml(xml_path)
+          if not df.empty:
+              dataframes.append(df)
+
+      if not dataframes:
+          print("No ENTSO-E rows were parsed.")
+          raise SystemExit(0)
+
+      combined = pd.concat(dataframes, ignore_index=True)
+      combined["timestamp"] = pd.to_datetime(combined["timestamp"], errors="coerce", utc=True).dt.tz_localize(None)
+      combined["actual_MW"] = pd.to_numeric(combined["actual_MW"], errors="coerce")
+      combined["forecast_MW"] = pd.to_numeric(combined["forecast_MW"], errors="coerce")
+      combined = combined.dropna(subset=["timestamp"])
+      if combined.empty:
+          print("ENTSO-E rows were parsed but all timestamps were invalid.")
+          raise SystemExit(0)
+
+      start_label = combined["timestamp"].min().strftime("%Y%m%d")
+      end_label = combined["timestamp"].max().strftime("%Y%m%d")
+      local_file = Path(f"/tmp/entsoe_generation_{country}_{start_label}_{end_label}.parquet")
+      pq.write_table(pa.Table.from_pandas(combined, preserve_index=False), local_file, compression="snappy")
+
+      blob_path = f"silver/entsoe/{country}/entsoe_generation_{start_label}_{end_label}.parquet"
+      blob = storage_client.bucket(bucket).blob(blob_path)
+      blob.upload_from_filename(str(local_file))
+      print(f"Uploaded gs://{bucket}/{blob_path}")
+
+  - id: era5_netcdf_to_parquet
+    type: io.kestra.plugin.scripts.python.Script
+    taskRunner:
+      type: io.kestra.plugin.core.runner.Process
+    beforeCommands:
+      - uv pip install --system xarray pandas numpy pyarrow netCDF4 google-cloud-storage || python -m pip install --user --no-cache-dir xarray pandas numpy pyarrow netCDF4 google-cloud-storage
+    env:
+      COUNTRY: "{{inputs.country}}"
+      GCS_BUCKET: "{{kv('GCP_BUCKET_NAME')}}"
+      GCP_PROJECT_ID: "{{kv('GCP_PROJECT_ID')}}"
+      GCP_SERVICE_ACCOUNT: "{{secret('GCP_SERVICE_ACCOUNT')}}"
+    script: |
+      """Convert ERA5 NetCDF to Parquet and upload directly to GCS."""
+      import json
+      import os
+      from pathlib import Path
+
+      import pyarrow as pa
+      import pyarrow.parquet as pq
+      import pandas as pd
+      import xarray as xr
+      from google.cloud import storage
+      from google.oauth2 import service_account
+
+      bucket = os.environ["GCS_BUCKET"]
+      country = os.environ.get("COUNTRY", "GR")
+      project_id = os.environ.get("GCP_PROJECT_ID", "")
+      credentials_info = json.loads(os.environ["GCP_SERVICE_ACCOUNT"])
+      credentials = service_account.Credentials.from_service_account_info(credentials_info)
+      storage_client = storage.Client(project=project_id, credentials=credentials)
+
+      source_prefix = f"bronze/era5/{country}/"
+      for blob in storage_client.list_blobs(bucket, prefix=source_prefix):
+          if not blob.name.endswith(".nc"):
+              continue
+          local_path = Path(blob.name)
+          local_path.parent.mkdir(parents=True, exist_ok=True)
+          blob.download_to_filename(str(local_path))
+
+      all_data = []
+      nc_files = list(Path(f"bronze/era5/{country}").rglob("*.nc"))
+      for nc_path in nc_files:
+          ds = xr.open_dataset(nc_path)
+          for var_name in ds.data_vars:
+              var_data = ds[var_name]
+              if var_data.ndim != 3:
+                  continue
+              df = var_data.to_dataframe(name="value").reset_index()
+              df["variable"] = var_name
+              df["country"] = country
+              all_data.append(df)
+          ds.close()
+
+      if not all_data:
+          print("No ERA5 rows were parsed.")
+          raise SystemExit(0)
+
+      combined = pd.concat(all_data, ignore_index=True)
+      combined = combined.rename(columns={"valid_time": "time", "latitude": "lat", "longitude": "lon"})
+      required = {"time", "lat", "lon", "value", "variable", "country"}
+      missing = sorted(required - set(combined.columns))
+      if missing:
+          print(f"Missing required ERA5 columns: {missing}")
+          raise SystemExit(1)
+
+      combined["time"] = pd.to_datetime(combined["time"], errors="coerce", utc=True).dt.tz_localize(None)
+      combined["lat"] = pd.to_numeric(combined["lat"], errors="coerce")
+      combined["lon"] = pd.to_numeric(combined["lon"], errors="coerce")
+      combined["value"] = pd.to_numeric(combined["value"], errors="coerce")
+      combined = combined.dropna(subset=["time", "lat", "lon", "value"])
+      if combined.empty:
+          print("ERA5 rows were parsed but all rows became invalid.")
+          raise SystemExit(0)
+
+      combined = combined.rename(columns={"time": "timestamp"})
+      start_label = combined["timestamp"].min().strftime("%Y%m%d")
+      end_label = combined["timestamp"].max().strftime("%Y%m%d")
+      local_file = Path(f"/tmp/era5_weather_{country}_{start_label}_{end_label}.parquet")
+      pq.write_table(pa.Table.from_pandas(combined, preserve_index=False), local_file, compression="snappy")
+
+      blob_path = f"silver/era5/{country}/era5_weather_{start_label}_{end_label}.parquet"
+      blob = storage_client.bucket(bucket).blob(blob_path)
+      blob.upload_from_filename(str(local_file))
+      print(f"Uploaded gs://{bucket}/{blob_path}")
+
+pluginDefaults:
+  - type: io.kestra.plugin.gcp
+    values:
+      serviceAccount: "{{secret('GCP_SERVICE_ACCOUNT')}}"
+      projectId: "{{kv('GCP_PROJECT_ID')}}"
+      location: "{{kv('GCP_LOCATION')}}"
+      bucket: "{{kv('GCP_BUCKET_NAME')}}"
