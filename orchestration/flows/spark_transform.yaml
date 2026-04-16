@@ -12,8 +12,17 @@ description: |
 
 inputs:
   - id: country
-    type: STRING
+    type: SELECT
     defaults: "GR"
+    values:
+      - GR
+      - DE
+      - FR
+      - PL
+      - ES
+      - DK
+      - SE
+      - IT
 
   - id: date_range
     type: STRING

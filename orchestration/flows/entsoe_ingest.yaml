@@ -2,13 +2,14 @@ id: entsoe_ingest
 namespace: european_energy
 
 description: |
-  Fetch ENTSO-E actual generation data for Greece from the transparency API.
+  Fetch ENTSO-E actual generation data from the transparency API.
   Saves raw XML responses to GCS bronze storage.
   ENTSO-E API key required in Kestra secrets as ENTSOE_API_KEY.
   Data source: https://transparency.entsoe.eu/api
   Auth: Request API token via transparency@entsoe.eu
   This flow is intended to be called by top-level automation flows such as
   `daily_pipeline` and `backfill_pipeline`.
+  Supported countries currently come from `orchestration/config/countries.json`.
 
 inputs:
   - id: start_date
@@ -18,26 +19,37 @@ inputs:
     type: DATE
     defaults: "2025-03-02"
   - id: country
-    type: STRING
+    type: SELECT
     defaults: "GR"
-
-variables:
-  output_file: "gs://{{kv('GCP_BUCKET_NAME')}}/bronze/entsoe/{{inputs.country}}/generation/{{inputs.start_date}}/generation.xml"
+    values:
+      - GR
+      - DE
+      - FR
+      - PL
+      - ES
+      - DK
+      - SE
+      - IT
 
 tasks:
   - id: fetch_generation
     type: io.kestra.plugin.scripts.python.Script
     taskRunner:
       type: io.kestra.plugin.core.runner.Process
-    outputFiles:
-      - "*.xml"
     env:
       ENTSOE_API_KEY: "{{secret('ENTSOE_API_KEY')}}"
       COUNTRY: "{{inputs.country}}"
       DATE_START: "{{inputs.start_date}}"
       DATE_END: "{{inputs.end_date}}"
+      GCP_SERVICE_ACCOUNT: "{{secret('GCP_SERVICE_ACCOUNT')}}"
+      GCP_PROJECT_ID: "{{kv('GCP_PROJECT_ID')}}"
+      GCP_BUCKET_NAME: "{{kv('GCP_BUCKET_NAME')}}"
     script: |
-      import os, sys, subprocess, site
+      import json
+      import os
+      import site
+      import subprocess
+      import sys
       import xml.etree.ElementTree as ET
       from pathlib import Path
 
@@ -53,36 +65,76 @@ tasks:
                   sys.path.append(user_site)
           import requests
 
+      try:
+          from google.cloud import storage
+          from google.oauth2 import service_account
+      except ModuleNotFoundError:
+          try:
+              subprocess.check_call(["uv", "pip", "install", "--system", "google-cloud-storage"])
+          except Exception:
+              subprocess.check_call([sys.executable, "-m", "pip", "install", "--user", "--no-cache-dir", "google-cloud-storage"])
+              user_site = site.getusersitepackages()
+              if user_site not in sys.path:
+                  sys.path.append(user_site)
+          from google.cloud import storage
+          from google.oauth2 import service_account
+
       api_key = os.environ["ENTSOE_API_KEY"]
       country = os.environ["COUNTRY"]
-      domain_map = {
-          "GR": "10YGR-HTSO-----Y",
-      }
-      domain = domain_map.get(country, country)
+      start_date = os.environ["DATE_START"]
+      config_path = Path("/workspace/european-energy/orchestration/config/countries.json")
+      with config_path.open(encoding="utf-8") as handle:
+          country_config = json.load(handle)
+
+      config = country_config.get(country)
+      if config is None:
+          print(f"[ERROR] No ENTSO-E country configuration for {country}")
+          sys.exit(1)
+
+      entsoe_areas = config.get("entsoe_areas", [])
+      if not entsoe_areas:
+          print(f"[ERROR] No ENTSO-E area codes configured for {country}")
+          sys.exit(1)
+
       start = os.environ["DATE_START"].replace("-", "")
       end = os.environ["DATE_END"].replace("-", "")
+      bucket_name = os.environ["GCP_BUCKET_NAME"]
+      project_id = os.environ["GCP_PROJECT_ID"]
+      credentials_info = json.loads(os.environ["GCP_SERVICE_ACCOUNT"])
+      credentials = service_account.Credentials.from_service_account_info(credentials_info)
+      storage_client = storage.Client(project=project_id, credentials=credentials)
 
-      params = {
-          "documentType": "A75",
-          "processType": "A16",
-          "in_Domain": domain,
-          "periodStart": f"{start}0000",
-          "periodEnd": f"{end}0000",
-          "securityToken": api_key,
-      }
+      output_dir = Path(".")
+      output_dir.mkdir(parents=True, exist_ok=True)
 
-      resp = requests.get("https://web-api.tp.entsoe.eu/api", params=params, timeout=120)
-      is_generation_doc = "<GL_MarketDocument" in resp.text
-      is_ack_doc = "<Acknowledgement_MarketDocument" in resp.text
+      failed = False
+      for area in entsoe_areas:
+          domain = area["code"]
+          label = area.get("label", "generation")
+          file_name = "generation.xml" if len(entsoe_areas) == 1 and label == "generation" else f"generation_{label}.xml"
 
-      if resp.status_code == 200 and is_generation_doc and not is_ack_doc:
-          output_dir = Path(".")
-          output_dir.mkdir(parents=True, exist_ok=True)
-          out_file = output_dir / "generation.xml"
-          out_file.write_text(resp.text, encoding="utf-8")
-          print(f"Saved: {out_file} ({len(resp.text)} bytes)")
-      else:
-          print(f"Failed: HTTP {resp.status_code}")
+          params = {
+              "documentType": "A75",
+              "processType": "A16",
+              "in_Domain": domain,
+              "periodStart": f"{start}0000",
+              "periodEnd": f"{end}0000",
+              "securityToken": api_key,
+          }
+
+          resp = requests.get("https://web-api.tp.entsoe.eu/api", params=params, timeout=120)
+          is_generation_doc = "<GL_MarketDocument" in resp.text
+          is_ack_doc = "<Acknowledgement_MarketDocument" in resp.text
+
+          if resp.status_code == 200 and is_generation_doc and not is_ack_doc:
+              out_file = output_dir / file_name
+              out_file.write_text(resp.text, encoding="utf-8")
+              blob_path = f"bronze/entsoe/{country}/generation/{start_date}/{file_name}"
+              storage_client.bucket(bucket_name).blob(blob_path).upload_from_filename(str(out_file))
+              print(f"[OK] Uploaded gs://{bucket_name}/{blob_path}")
+              continue
+
+          print(f"[ERROR] HTTP {resp.status_code} for {country}/{label}")
           print(resp.text[:500])
           try:
               root = ET.fromstring(resp.text)
@@ -96,12 +148,10 @@ tasks:
                   )
           except Exception:
               pass
-          sys.exit(1)
+          failed = True
 
-  - id: upload_to_gcs
-    type: io.kestra.plugin.gcp.gcs.Upload
-    from: "{{outputs.fetch_generation.outputFiles['generation.xml']}}"
-    to: "{{render(vars.output_file)}}"
+      if failed:
+          sys.exit(1)
 
 pluginDefaults:
   - type: io.kestra.plugin.gcp

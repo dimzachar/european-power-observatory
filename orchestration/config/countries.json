@@ -1,0 +1,82 @@
+{
+  "DE": {
+    "country_name": "Germany",
+    "entsoe_areas": [
+      {
+        "code": "10Y1001A1001A83F",
+        "label": "generation"
+      }
+    ],
+    "era5_area": [55.1, 5.5, 47.0, 15.5]
+  },
+  "DK": {
+    "country_name": "Denmark",
+    "entsoe_areas": [
+      {
+        "code": "10Y1001A1001A65H",
+        "label": "generation"
+      }
+    ],
+    "era5_area": [57.8, 7.5, 54.5, 15.5]
+  },
+  "ES": {
+    "country_name": "Spain",
+    "entsoe_areas": [
+      {
+        "code": "10YES-REE------0",
+        "label": "generation"
+      }
+    ],
+    "era5_area": [44.5, -10.0, 35.5, 4.5]
+  },
+  "FR": {
+    "country_name": "France",
+    "entsoe_areas": [
+      {
+        "code": "10YFR-RTE------C",
+        "label": "generation"
+      }
+    ],
+    "era5_area": [51.5, -5.5, 41.0, 9.8]
+  },
+  "GR": {
+    "country_name": "Greece",
+    "entsoe_areas": [
+      {
+        "code": "10YGR-HTSO-----Y",
+        "label": "generation"
+      }
+    ],
+    "era5_area": [41.5, 19.0, 34.5, 29.5]
+  },
+  "IT": {
+    "country_name": "Italy",
+    "entsoe_areas": [
+      {
+        "code": "10YIT-GRTN-----B",
+        "label": "generation"
+      }
+    ],
+    "era5_area": [47.5, 6.0, 36.0, 18.8]
+  },
+  "PL": {
+    "country_name": "Poland",
+    "entsoe_areas": [
+      {
+        "code": "10YPL-AREA-----S",
+        "label": "generation"
+      }
+    ],
+    "era5_area": [55.0, 14.0, 49.0, 24.5]
+  },
+  "SE": {
+    "country_name": "Sweden",
+    "entsoe_areas": [
+      {
+        "code": "10YSE-1--------K",
+        "label": "generation"
+      }
+    ],
+    "era5_area": [69.5, 10.5, 55.0, 24.5]
+  }
+}

@@ -19,6 +19,7 @@ solar_data as (
         source_ts as ts_hour,
         lat,
         lon,
+        country,
         variable,
         value,
         date(source_ts) as date_key,
@@ -36,11 +37,12 @@ pivoted as (
         hour_of_day,
         lat,
         lon,
+        country,
         max(case when variable = 'ssrd' then value end) as solar_radiation_jm2,
         max(case when variable = 'tcc' then value end) as cloud_cover_fraction,
         max(case when variable = 't2m' then value end) as temp_2m_kelvin,
     from solar_data
-    group by 1, 2, 3, 4, 5
+    group by 1, 2, 3, 4, 5, 6
 ),
 
 with_derived as (
@@ -50,8 +52,8 @@ with_derived as (
         hour_of_day,
         lat,
         lon,
-        'GR' as country_code,
-        'Greece' as country_name,
+        country as country_code,
+        {{ country_name_from_code('country') }} as country_name,
         solar_radiation_jm2,
         cloud_cover_fraction,
         temp_2m_kelvin,

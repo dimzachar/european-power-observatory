@@ -3,8 +3,6 @@
     tags=['intermediate', 'generation']
 ) }}
 
-{% set country = var('country', 'GR') %}
-
 with daily as (
     select
         date_key,
@@ -17,7 +15,6 @@ with daily as (
         round(sum(actual_mw), 2) as total_mwh,  -- hourly MW sums to MWh
         count(*) as hours_reported,
     from {{ ref('stg_entsoe__generation') }}
-    where country_code = '{{ country }}'
     group by 1, 2, 3, 4
 ),
 

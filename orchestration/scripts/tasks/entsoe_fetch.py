@@ -3,8 +3,8 @@
 This local helper mirrors the current working Kestra MVP flow:
 - documentType A75 (actual generation per type)
 - processType A16
-- writes a deterministic local file:
-  bronze/entsoe/{country}/generation/{start_date}/generation.xml
+- writes one or more local XML files under:
+  bronze/entsoe/{country}/generation/{start_date}/
 
 The script is local-first: it fetches XML to the repository's `bronze/`
 mirror and does not upload to GCS.
@@ -15,6 +15,7 @@ from __future__ import annotations
 import os
 import sys
 import xml.etree.ElementTree as ET
+import json
 from pathlib import Path
 
 import requests
@@ -24,10 +25,7 @@ load_dotenv()
 
 BASE_URL = "https://web-api.tp.entsoe.eu/api"
 OUTPUT_DIR = Path("bronze/entsoe")
-
-DOMAIN_MAP = {
-    "GR": "10YGR-HTSO-----Y",
-}
+COUNTRY_CONFIG_PATH = Path(__file__).resolve().parents[2] / "config" / "countries.json"
 
 
 def env_first(*names: str, default: str = "") -> str:
@@ -38,61 +36,85 @@ def env_first(*names: str, default: str = "") -> str:
     return default
 
 
+def load_country_config() -> dict:
+    with COUNTRY_CONFIG_PATH.open(encoding="utf-8") as handle:
+        return json.load(handle)
+
+
 def fetch_generation(country: str, start_date: str, end_date: str) -> bool:
     api_key = env_first("ENTSOE_API_KEY")
     if not api_key:
         print("[ERROR] ENTSOE_API_KEY not set. Request access via transparency@entsoe.eu")
         return False
 
-    domain = DOMAIN_MAP.get(country, country)
+    config = load_country_config()
+    country_config = config.get(country)
+    if country_config is None:
+        print(f"[ERROR] No ENTSO-E country configuration for {country}")
+        return False
+
+    entsoe_areas = country_config.get("entsoe_areas", [])
+    if not entsoe_areas:
+        print(f"[ERROR] No ENTSO-E area codes configured for {country}")
+        return False
+
     start = start_date.replace("-", "")
     end = end_date.replace("-", "")
 
-    params = {
-        "documentType": "A75",
-        "processType": "A16",
-        "in_Domain": domain,
-        "periodStart": f"{start}0000",
-        "periodEnd": f"{end}0000",
-        "securityToken": api_key,
-    }
-
     print(f"[ENTSO-E] Fetching generation for {country} ({start_date} to {end_date})")
+    out_dir = OUTPUT_DIR / country / "generation" / start_date
+    out_dir.mkdir(parents=True, exist_ok=True)
 
-    try:
-        resp = requests.get(BASE_URL, params=params, timeout=120)
-    except Exception as exc:
-        print(f"[ERROR] Request failed: {exc}")
-        return False
+    failed = False
+    for area in entsoe_areas:
+        domain = area["code"]
+        label = area.get("label", "generation")
+        file_name = "generation.xml" if len(entsoe_areas) == 1 and label == "generation" else f"generation_{label}.xml"
 
-    is_generation_doc = "<GL_MarketDocument" in resp.text
-    is_ack_doc = "<Acknowledgement_MarketDocument" in resp.text
+        params = {
+            "documentType": "A75",
+            "processType": "A16",
+            "in_Domain": domain,
+            "periodStart": f"{start}0000",
+            "periodEnd": f"{end}0000",
+            "securityToken": api_key,
+        }
 
-    if resp.status_code == 200 and is_generation_doc and not is_ack_doc:
-        out_dir = OUTPUT_DIR / country / "generation" / start_date
-        out_dir.mkdir(parents=True, exist_ok=True)
-        out_file = out_dir / "generation.xml"
-        out_file.write_text(resp.text, encoding="utf-8")
-        print(f"[OK] Saved {out_file} ({len(resp.text)} bytes)")
-        return True
+        try:
+            resp = requests.get(BASE_URL, params=params, timeout=120)
+        except Exception as exc:
+            print(f"[ERROR] Request failed for {country}/{label}: {exc}")
+            failed = True
+            continue
 
-    print(f"[ERROR] HTTP {resp.status_code}")
-    print(resp.text[:500])
+        is_generation_doc = "<GL_MarketDocument" in resp.text
+        is_ack_doc = "<Acknowledgement_MarketDocument" in resp.text
 
-    try:
-        root = ET.fromstring(resp.text)
-        reason_code = root.find(".//{*}Reason/{*}code")
-        reason_text = root.find(".//{*}Reason/{*}text")
-        if reason_code is not None or reason_text is not None:
-            print(
-                "ENTSO-E reason:"
-                f" code={reason_code.text if reason_code is not None else 'n/a'}"
-                f" text={reason_text.text if reason_text is not None else 'n/a'}"
-            )
-    except Exception:
-        pass
+        if resp.status_code == 200 and is_generation_doc and not is_ack_doc:
+            out_file = out_dir / file_name
+            out_file.write_text(resp.text, encoding="utf-8")
+            print(f"[OK] Saved {out_file} ({len(resp.text)} bytes)")
+            continue
 
-    return False
+        print(f"[ERROR] HTTP {resp.status_code} for {country}/{label}")
+        print(resp.text[:500])
+
+        try:
+            root = ET.fromstring(resp.text)
+            reason_code = root.find(".//{*}Reason/{*}code")
+            reason_text = root.find(".//{*}Reason/{*}text")
+            if reason_code is not None or reason_text is not None:
+                print(
+                    "ENTSO-E reason:"
+                    f" code={reason_code.text if reason_code is not None else 'n/a'}"
+                    f" text={reason_text.text if reason_text is not None else 'n/a'}"
+                )
+        except Exception:
+            pass
+
+        failed = True
+
+    return not failed
 
 
 def main() -> int:

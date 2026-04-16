@@ -5,6 +5,7 @@ This local helper mirrors the current working Kestra MVP flow:
 - one NetCDF file per day/category
 - writes to:
   bronze/era5/{country}/{year}/{month}/{date}_{category}.nc
+  using country bounding boxes from `orchestration/config/countries.json`
 
 The script is local-first: it writes to the repository's `bronze/` mirror
 and does not upload to GCS.
@@ -14,6 +15,7 @@ from __future__ import annotations
 
 import os
 import sys
+import json
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -24,11 +26,7 @@ load_dotenv()
 
 OUTPUT_DIR = Path("bronze/era5")
 DATASET = "reanalysis-era5-single-levels"
-
-# Greece-first MVP bounding box: north, west, south, east
-AREA_BY_COUNTRY = {
-    "GR": [41.5, 19.0, 34.5, 29.0],
-}
+COUNTRY_CONFIG_PATH = Path(__file__).resolve().parents[2] / "config" / "countries.json"
 
 CATEGORY_VARIABLES = {
     "wind": [
@@ -52,6 +50,11 @@ def env_first(*names: str, default: str = "") -> str:
     return default
 
 
+def load_country_config() -> dict:
+    with COUNTRY_CONFIG_PATH.open(encoding="utf-8") as handle:
+        return json.load(handle)
+
+
 def daterange(start_date: str, end_date: str):
     start_dt = datetime.strptime(start_date, "%Y-%m-%d")
     end_dt = datetime.strptime(end_date, "%Y-%m-%d")
@@ -70,7 +73,9 @@ def build_client() -> cdsapi.Client:
 
 
 def fetch_day(client: cdsapi.Client, country: str, current_dt: datetime) -> bool:
-    area = AREA_BY_COUNTRY.get(country)
+    config = load_country_config()
+    country_config = config.get(country)
+    area = country_config.get("era5_area") if country_config else None
     if area is None:
         print(f"[ERROR] No ERA5 area configured for country={country}")
         return False
@@ -115,18 +120,19 @@ def fetch_day(client: cdsapi.Client, country: str, current_dt: datetime) -> bool
 
 
 def main() -> int:
-    country = env_first("COUNTRY", default="GR")
+    countries_raw = env_first("COUNTRIES", "COUNTRY", default="GR")
+    countries = [country.strip() for country in countries_raw.split(",") if country.strip()]
     start_date = env_first("DATE_START", "START_DATE", default="2025-03-01")
     end_date = env_first("DATE_END", "END_DATE", default="2025-03-02")
 
-    print(f"\n{'=' * 60}")
-    print(f"ERA5 local fetch | country={country} | start={start_date} | end={end_date}")
-    print(f"{'=' * 60}\n")
-
     client = build_client()
     failed = False
-    for current_dt in daterange(start_date, end_date):
-        failed = (not fetch_day(client, country, current_dt)) or failed
+    for country in countries:
+        print(f"\n{'=' * 60}")
+        print(f"ERA5 local fetch | country={country} | start={start_date} | end={end_date}")
+        print(f"{'=' * 60}\n")
+        for current_dt in daterange(start_date, end_date):
+            failed = (not fetch_day(client, country, current_dt)) or failed
 
     return 1 if failed else 0
 

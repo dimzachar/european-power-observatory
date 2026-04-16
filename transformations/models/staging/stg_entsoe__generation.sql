@@ -18,20 +18,18 @@ with source as (
 filtered as (
     select
         source_ts as ts_hour,
-        country,
+        country as country_code,
         energy_source,
         psr_type as psr_code,
         cast(actual_MW as float64) as actual_mw,
         cast(forecast_MW as float64) as forecast_mw,
-        'GR' as country_code,
-        'Greece' as country_name,
+        {{ country_name_from_code('country') }} as country_name,
         date(source_ts) as date_key,
         extract(hour from source_ts) as hour_of_day,
         extract(month from source_ts) as month_of_year,
     from source
     where
         source_ts is not null
-        and country = 'GR'
         and (actual_MW >= 0 or forecast_MW >= 0)
 ),
 

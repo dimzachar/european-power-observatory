@@ -2,10 +2,11 @@ id: era5_ingest
 namespace: european_energy
 
 description: |
-  Fetch ERA5 reanalysis data from Copernicus CDS for Greece bounding box.
+  Fetch ERA5 reanalysis data from Copernicus CDS for a configured country bounding box.
   Variables: wind speed (100m), surface solar radiation, 2m temperature, cloud cover, precipitation.
-  Saves NetCDF to GCS bronze/era5/GR/YYYY/MM/.
+  Saves NetCDF to GCS bronze/era5/{country}/YYYY/MM/.
   Requires: CDSAPI key in environment (~/.cdsapirc) or via secret.
+  Supported countries currently come from `orchestration/config/countries.json`.
 
 inputs:
   - id: date
@@ -13,16 +14,23 @@ inputs:
     defaults: "2025-03-01"
 
   - id: country
-    type: STRING
+    type: SELECT
     defaults: "GR"
+    values:
+      - GR
+      - DE
+      - FR
+      - PL
+      - ES
+      - DK
+      - SE
+      - IT
 
 variables:
   date_year: "{{inputs.date | date('yyyy')}}"
   date_month: "{{inputs.date | date('MM')}}"
   date_day: "{{inputs.date | date('dd')}}"
   bronze_dir: "gs://{{kv('GCP_BUCKET_NAME')}}/bronze/era5/{{inputs.country}}/{{vars.date_year}}/{{vars.date_month}}/"
-  # Greece bounding box
-  area: "41.5,19.0,34.5,29.5"  # N, W, S, E
 
 tasks:
   - id: fetch_era5
@@ -35,6 +43,7 @@ tasks:
       CDSAPI_URL: "{{kv('CDSAPI_URL')}}"
       CDSAPI_KEY: "{{secret('CDSAPI_KEY')}}"
     script: |
+      import json
       import os, sys, subprocess, site
       from pathlib import Path
 
@@ -57,11 +66,18 @@ tasks:
 
       date = "{{inputs.date}}"
       country = "{{inputs.country}}"
+      config_path = Path("/workspace/european-energy/orchestration/config/countries.json")
+      with config_path.open(encoding="utf-8") as handle:
+          country_config = json.load(handle)
+
+      config = country_config.get(country)
+      area = config.get("era5_area") if config else None
+      if area is None:
+          raise SystemExit(f"No ERA5 area configured for country={country}")
+
       year = date[:4]
       month = date[5:7]
       day = date[8:10]
-      grid_lat = (41.5, 34.5)  # N-S for Greece
-      grid_lon = (19.0, 29.0)  # W-E
 
       output_dir = Path(".")
       output_dir.mkdir(parents=True, exist_ok=True)
@@ -83,7 +99,7 @@ tasks:
                   "year": year, "month": month, "day": day,
                   "time": [f"{h:02d}:00" for h in range(24)],
                   "data_format": "netcdf",
-                  "area": [grid_lat[0], grid_lon[0], grid_lat[1], grid_lon[1]],
+                  "area": area,
               },
               str(out_wind)
           )
@@ -105,7 +121,7 @@ tasks:
                   "year": year, "month": month, "day": day,
                   "time": [f"{h:02d}:00" for h in range(24)],
                   "data_format": "netcdf",
-                  "area": [grid_lat[0], grid_lon[0], grid_lat[1], grid_lon[1]],
+                  "area": area,
               },
               str(out_solar)
           )
@@ -127,7 +143,7 @@ tasks:
                   "year": year, "month": month, "day": day,
                   "time": [f"{h:02d}:00" for h in range(24)],
                   "data_format": "netcdf",
-                  "area": [grid_lat[0], grid_lon[0], grid_lat[1], grid_lon[1]],
+                  "area": area,
               },
               str(out_temp)
           )
