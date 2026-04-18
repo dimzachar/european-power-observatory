@@ -1,0 +1,19 @@
+project_id  = "your-gcp-project-id"
+location    = "europe-west4"
+bq_location = "EU"
+environment = "dev"
+
+# Extra labels applied to all resources
+labels = {
+  owner = "your-name"
+}
+
+# Secret slots — add actual values manually after terraform apply
+secret_ids = [
+  "entsoe-api-key",
+  "cdsapi-key",
+  "gcp-service-account",
+]
+
+# Safety: keep false to prevent accidental table deletion on destroy
+dataset_delete_contents_on_destroy = false

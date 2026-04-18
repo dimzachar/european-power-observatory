@@ -19,6 +19,7 @@ import json
 from datetime import datetime, timedelta
 from pathlib import Path
 
+import time
 import cdsapi
 from dotenv import load_dotenv
 
@@ -27,6 +28,26 @@ load_dotenv()
 OUTPUT_DIR = Path("bronze/era5")
 DATASET = "reanalysis-era5-single-levels"
 COUNTRY_CONFIG_PATH = Path(__file__).resolve().parents[2] / "config" / "countries.json"
+
+RETRY_ATTEMPTS = 3
+RETRY_BACKOFF_BASE = 30  # seconds — CDS queue errors need longer waits: 30, 60, 120
+
+
+def retrieve_with_retry(client: cdsapi.Client, dataset: str, request: dict, target: str) -> bool:
+    """Retrieve from CDS with exponential backoff on transient errors."""
+    for attempt in range(1, RETRY_ATTEMPTS + 1):
+        try:
+            client.retrieve(dataset, request, target)
+            return True
+        except Exception as exc:
+            if attempt == RETRY_ATTEMPTS:
+                print(f"[ERROR] CDS retrieve failed after {RETRY_ATTEMPTS} attempts: {exc}")
+                return False
+            wait = RETRY_BACKOFF_BASE * (2 ** (attempt - 1))
+            print(f"[WARN] CDS error (attempt {attempt}/{RETRY_ATTEMPTS}): {exc} — retrying in {wait}s")
+            time.sleep(wait)
+    return False
+
 
 CATEGORY_VARIABLES = {
     "wind": [
@@ -97,7 +118,8 @@ def fetch_day(client: cdsapi.Client, country: str, current_dt: datetime) -> bool
 
         print(f"[ERA5] Fetching {category} for {country} on {date_str}")
         try:
-            client.retrieve(
+            ok = retrieve_with_retry(
+                client,
                 DATASET,
                 {
                     "product_type": ["reanalysis"],
@@ -111,7 +133,10 @@ def fetch_day(client: cdsapi.Client, country: str, current_dt: datetime) -> bool
                 },
                 str(out_file),
             )
-            print(f"[OK] Saved {out_file}")
+            if ok:
+                print(f"[OK] Saved {out_file}")
+            else:
+                failed = True
         except Exception as exc:
             print(f"[ERROR] Failed {category} for {date_str}: {exc}")
             failed = True

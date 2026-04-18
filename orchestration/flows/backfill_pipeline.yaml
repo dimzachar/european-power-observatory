@@ -22,6 +22,14 @@ inputs:
       - SE
       - IT
 
+  - id: era5_mode
+    type: SELECT
+    defaults: "monthly"
+    description: "monthly = one CDS request per category per month (faster for backfills). daily = one request per day."
+    values:
+      - monthly
+      - daily
+
 variables:
   date: "{{ trigger.date | date('yyyy-MM-dd') }}"
 
@@ -58,6 +66,7 @@ tasks:
         inputs:
           date: "{{ render(vars.date) }}"
           country: "{{ taskrun.value }}"
+          mode: "{{ inputs.era5_mode }}"
 
       - id: refresh_silver
         type: io.kestra.plugin.core.flow.Subflow

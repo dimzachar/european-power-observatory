@@ -1,12 +1,15 @@
-# Bronze: raw XML + NetCDF
 resource "google_storage_bucket" "bronze" {
-  name          = "${var.env}-renewable-energy-bronze-${var.project_id}"
+  depends_on = [google_project_service.required]
+
+  name          = "${var.environment}-renewable-energy-bronze-${var.project_id}"
+  project       = var.project_id
   location      = var.location
   force_destroy = true
+  labels        = local.common_labels
 
   lifecycle_rule {
     condition {
-      age = 90
+      age = var.gcs_bronze_lifecycle_age_days
     }
     action {
       type = "AbortIncompleteMultipartUpload"
@@ -14,15 +17,18 @@ resource "google_storage_bucket" "bronze" {
   }
 }
 
-# Silver: cleaned Parquet
 resource "google_storage_bucket" "silver" {
-  name          = "${var.env}-renewable-energy-silver-${var.project_id}"
+  depends_on = [google_project_service.required]
+
+  name          = "${var.environment}-renewable-energy-silver-${var.project_id}"
+  project       = var.project_id
   location      = var.location
   force_destroy = true
+  labels        = local.common_labels
 
   lifecycle_rule {
     condition {
-      age = 90
+      age = var.gcs_silver_lifecycle_age_days
     }
     action {
       type = "AbortIncompleteMultipartUpload"
@@ -30,9 +36,12 @@ resource "google_storage_bucket" "silver" {
   }
 }
 
-# Gold: analytics-ready
 resource "google_storage_bucket" "gold" {
-  name          = "${var.env}-renewable-energy-gold-${var.project_id}"
+  depends_on = [google_project_service.required]
+
+  name          = "${var.environment}-renewable-energy-gold-${var.project_id}"
+  project       = var.project_id
   location      = var.location
   force_destroy = true
+  labels        = local.common_labels
 }

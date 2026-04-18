@@ -21,32 +21,30 @@ def netcdf_to_df(nc_path: Path) -> pd.DataFrame:
     """Convert a single NetCDF to flat DataFrame with lat/lon/timestamp columns."""
     ds = xr.open_dataset(nc_path)
 
-    # Get dimensions
-    times = ds.coords["time"].values if "time" in ds.coords else ds.coords["valid_time"].values
-    lats = ds.coords["latitude"].values if "latitude" in ds.coords else ds.coords["lat"].values
-    lons = ds.coords["longitude"].values if "longitude" in ds.coords else ds.coords["lon"].values
-
-    # Flatten: for each variable, create rows of (time, lat, lon, value)
-    rows = []
+    # Flatten: vectorized via xarray → DataFrame (avoids pure-Python triple loop)
+    frames = []
     for var_name in ds.data_vars:
         var_data = ds[var_name]
-        # Expected shape: (time, lat, lon)
         if var_data.ndim == 3:
-            for t_idx, t in enumerate(times):
-                for lat_idx, lat in enumerate(lats):
-                    for lon_idx, lon in enumerate(lons):
-                        value = var_data[t_idx, lat_idx, lon_idx].item()
-                        if not np.isnan(value):
-                            rows.append({
-                                "timestamp": pd.Timestamp(t),
-                                "lat": float(lat),
-                                "lon": float(lon),
-                                "variable": var_name,
-                                "value": float(value),
-                            })
+            df = var_data.to_dataframe(name="value").reset_index()
+            df["variable"] = var_name
+            frames.append(df)
 
     ds.close()
-    return pd.DataFrame(rows)
+    if not frames:
+        return pd.DataFrame()
+
+    combined = pd.concat(frames, ignore_index=True)
+    # Normalise coordinate column names (ERA5 uses latitude/longitude or lat/lon)
+    combined = combined.rename(columns={
+        "valid_time": "time",
+        "latitude": "lat",
+        "longitude": "lon",
+    })
+    combined = combined.rename(columns={"time": "timestamp"})
+    combined["timestamp"] = pd.to_datetime(combined["timestamp"])
+    combined = combined.dropna(subset=["value"])
+    return combined[["timestamp", "lat", "lon", "variable", "value"]]
 
 
 def main():
@@ -61,7 +59,7 @@ def main():
         date_str = parts[0]
         cat = "_".join(parts[1:])
 
-        out_path = OUT_DIR / cat / nc_file.stem + ".parquet"
+        out_path = OUT_DIR / cat / (nc_file.stem + ".parquet")
         if out_path.exists():
             print(f"    [SKIP] already exists: {out_path}")
             continue

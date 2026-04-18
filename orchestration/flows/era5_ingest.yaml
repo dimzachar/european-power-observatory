@@ -3,10 +3,17 @@ namespace: european_energy
 
 description: |
   Fetch ERA5 reanalysis data from Copernicus CDS for a configured country bounding box.
-  Variables: wind speed (100m), surface solar radiation, 2m temperature, cloud cover, precipitation.
+  Variables: wind speed (100m), surface solar radiation, 2m temperature.
   Saves NetCDF to GCS bronze/era5/{country}/YYYY/MM/.
-  Requires: CDSAPI key in environment (~/.cdsapirc) or via secret.
-  Supported countries currently come from `orchestration/config/countries.json`.
+
+  Two modes:
+  - daily (default): fetches one day per CDS request. Used by daily_pipeline.
+  - monthly: fetches all days in the month in one CDS request per variable category.
+    Significantly faster for backfills — ~30x fewer CDS queue submissions per country.
+    Used by backfill_pipeline when mode=monthly.
+
+  Requires: CDSAPI_KEY secret and CDSAPI_URL KV value in Kestra.
+  Country bounding boxes come from orchestration/config/countries.json.
 
 inputs:
   - id: date
@@ -26,10 +33,16 @@ inputs:
       - SE
       - IT
 
+  - id: mode
+    type: SELECT
+    defaults: "daily"
+    values:
+      - daily
+      - monthly
+
 variables:
   date_year: "{{inputs.date | date('yyyy')}}"
   date_month: "{{inputs.date | date('MM')}}"
-  date_day: "{{inputs.date | date('dd')}}"
   bronze_dir: "gs://{{kv('GCP_BUCKET_NAME')}}/bronze/era5/{{inputs.country}}/{{vars.date_year}}/{{vars.date_month}}/"
 
 tasks:
@@ -44,13 +57,17 @@ tasks:
       CDSAPI_KEY: "{{secret('CDSAPI_KEY')}}"
     script: |
       import json
-      import os, sys, subprocess, site
+      import os
+      import sys
+      import subprocess
+      import site
+      import time
+      import calendar
       from pathlib import Path
 
       try:
           import cdsapi
       except ModuleNotFoundError:
-          # Prefer uv (available in your Kestra runtime), fallback to pip.
           try:
               subprocess.check_call(["uv", "pip", "install", "--system", "cdsapi"])
           except Exception:
@@ -60,109 +77,141 @@ tasks:
                   sys.path.append(user_site)
           import cdsapi
 
-      url = os.environ.get("CDSAPI_URL", "https://cds.climate.copernicus.eu/api")
-      key = os.environ.get("CDSAPI_KEY", "")
-      client = cdsapi.Client(url=url, key=key)
+      RETRY_ATTEMPTS = 3
+      RETRY_BACKOFF_BASE = 30  # seconds: 30, 60, 120
 
-      date = "{{inputs.date}}"
+      def retrieve_with_retry(client, dataset, request, target):
+          for attempt in range(1, RETRY_ATTEMPTS + 1):
+              try:
+                  client.retrieve(dataset, request, target)
+                  return True
+              except Exception as exc:
+                  if attempt == RETRY_ATTEMPTS:
+                      print(f"[ERROR] CDS retrieve failed after {RETRY_ATTEMPTS} attempts: {exc}")
+                      return False
+                  wait = RETRY_BACKOFF_BASE * (2 ** (attempt - 1))
+                  print(f"[WARN] CDS error (attempt {attempt}/{RETRY_ATTEMPTS}): {exc} — retrying in {wait}s")
+                  time.sleep(wait)
+          return False
+
+      CATEGORY_VARIABLES = {
+          "wind":  ["100m_u_component_of_wind", "100m_v_component_of_wind"],
+          "solar": ["surface_solar_radiation_downwards"],
+          "temp":  ["2m_temperature"],
+      }
+
+      url     = os.environ.get("CDSAPI_URL", "https://cds.climate.copernicus.eu/api")
+      key     = os.environ.get("CDSAPI_KEY", "")
+      client  = cdsapi.Client(url=url, key=key)
+
+      date    = "{{inputs.date}}"
       country = "{{inputs.country}}"
+      mode    = "{{inputs.mode}}"
+      year    = date[:4]
+      month   = date[5:7]
+      day     = date[8:10]
+
       config_path = Path("/workspace/european-energy/orchestration/config/countries.json")
-      with config_path.open(encoding="utf-8") as handle:
-          country_config = json.load(handle)
+      with config_path.open(encoding="utf-8") as f:
+          country_config = json.load(f)
 
       config = country_config.get(country)
-      area = config.get("era5_area") if config else None
+      area   = config.get("era5_area") if config else None
       if area is None:
           raise SystemExit(f"No ERA5 area configured for country={country}")
 
-      year = date[:4]
-      month = date[5:7]
-      day = date[8:10]
-
       output_dir = Path(".")
-      output_dir.mkdir(parents=True, exist_ok=True)
+      failed = False
 
-      # Fetch wind data
-      print("Fetching wind (100m u, v components)...")
-      out_wind = output_dir / f"{date}_wind.nc"
-      if out_wind.exists():
-          print("  [SKIP] Wind already exists")
-      else:
-          client.retrieve(
-              "reanalysis-era5-single-levels",
-              {
+      if mode == "monthly":
+          # One CDS request per category covers all days in the month.
+          # Each file is named {year}-{month}_{category}.nc and contains all days.
+          days_in_month = [f"{d:02d}" for d in range(1, calendar.monthrange(int(year), int(month))[1] + 1)]
+          print(f"[ERA5] Monthly mode — {year}-{month} ({len(days_in_month)} days) for {country}")
+
+          for category, variables in CATEGORY_VARIABLES.items():
+              out_file = output_dir / f"{year}-{month}_{category}.nc"
+              if out_file.exists():
+                  print(f"[SKIP] {out_file} already exists")
+                  continue
+              print(f"[ERA5] Fetching {category} monthly ({year}-{month})...")
+              ok = retrieve_with_retry(client, "reanalysis-era5-single-levels", {
                   "product_type": ["reanalysis"],
-                  "variable": [
-                      "100m_u_component_of_wind",
-                      "100m_v_component_of_wind",
-                  ],
-                  "year": year, "month": month, "day": day,
+                  "variable": variables,
+                  "year": year,
+                  "month": month,
+                  "day": days_in_month,
                   "time": [f"{h:02d}:00" for h in range(24)],
                   "data_format": "netcdf",
                   "area": area,
-              },
-              str(out_wind)
-          )
-          print(f"  Saved: {out_wind}")
+              }, str(out_file))
+              if ok:
+                  print(f"[OK] Saved {out_file}")
+              else:
+                  failed = True
 
-      # Fetch solar data
-      print("Fetching solar (surface solar radiation downwards)...")
-      out_solar = output_dir / f"{date}_solar.nc"
-      if out_solar.exists():
-          print("  [SKIP] Solar already exists")
       else:
-          client.retrieve(
-              "reanalysis-era5-single-levels",
-              {
+          # Daily mode: one CDS request per category for a single day.
+          print(f"[ERA5] Daily mode — {date} for {country}")
+          for category, variables in CATEGORY_VARIABLES.items():
+              out_file = output_dir / f"{date}_{category}.nc"
+              if out_file.exists():
+                  print(f"[SKIP] {out_file} already exists")
+                  continue
+              print(f"[ERA5] Fetching {category} for {date}...")
+              ok = retrieve_with_retry(client, "reanalysis-era5-single-levels", {
                   "product_type": ["reanalysis"],
-                  "variable": [
-                      "surface_solar_radiation_downwards",
-                  ],
-                  "year": year, "month": month, "day": day,
+                  "variable": variables,
+                  "year": year,
+                  "month": month,
+                  "day": day,
                   "time": [f"{h:02d}:00" for h in range(24)],
                   "data_format": "netcdf",
                   "area": area,
-              },
-              str(out_solar)
-          )
-          print(f"  Saved: {out_solar}")
+              }, str(out_file))
+              if ok:
+                  print(f"[OK] Saved {out_file}")
+              else:
+                  failed = True
 
-      # Fetch temperature
-      print("Fetching temperature (2m)...")
-      out_temp = output_dir / f"{date}_temp.nc"
-      if out_temp.exists():
-          print("  [SKIP] Temperature already exists")
-      else:
-          client.retrieve(
-              "reanalysis-era5-single-levels",
-              {
-                  "product_type": ["reanalysis"],
-                  "variable": [
-                      "2m_temperature",
-                  ],
-                  "year": year, "month": month, "day": day,
-                  "time": [f"{h:02d}:00" for h in range(24)],
-                  "data_format": "netcdf",
-                  "area": area,
-              },
-              str(out_temp)
-          )
-          print(f"  Saved: {out_temp}")
+      if failed:
+          sys.exit(1)
 
-  - id: upload_wind_to_gcs
-    type: io.kestra.plugin.gcp.gcs.Upload
-    from: "{{outputs.fetch_era5.outputFiles[inputs.date ~ '_wind.nc']}}"
-    to: "{{render(vars.bronze_dir)}}{{inputs.date}}_wind.nc"
+  # --- Daily mode uploads (one file per category) ---
+  - id: upload_wind_daily
+    type: io.kestra.plugin.core.flow.If
+    condition: "{{inputs.mode == 'daily'}}"
+    then:
+      - id: upload_wind
+        type: io.kestra.plugin.gcp.gcs.Upload
+        from: "{{outputs.fetch_era5.outputFiles[inputs.date ~ '_wind.nc']}}"
+        to: "{{render(vars.bronze_dir)}}{{inputs.date}}_wind.nc"
+      - id: upload_solar
+        type: io.kestra.plugin.gcp.gcs.Upload
+        from: "{{outputs.fetch_era5.outputFiles[inputs.date ~ '_solar.nc']}}"
+        to: "{{render(vars.bronze_dir)}}{{inputs.date}}_solar.nc"
+      - id: upload_temp
+        type: io.kestra.plugin.gcp.gcs.Upload
+        from: "{{outputs.fetch_era5.outputFiles[inputs.date ~ '_temp.nc']}}"
+        to: "{{render(vars.bronze_dir)}}{{inputs.date}}_temp.nc"
 
-  - id: upload_solar_to_gcs
-    type: io.kestra.plugin.gcp.gcs.Upload
-    from: "{{outputs.fetch_era5.outputFiles[inputs.date ~ '_solar.nc']}}"
-    to: "{{render(vars.bronze_dir)}}{{inputs.date}}_solar.nc"
-
-  - id: upload_temp_to_gcs
-    type: io.kestra.plugin.gcp.gcs.Upload
-    from: "{{outputs.fetch_era5.outputFiles[inputs.date ~ '_temp.nc']}}"
-    to: "{{render(vars.bronze_dir)}}{{inputs.date}}_temp.nc"
+  # --- Monthly mode uploads (one file per category covers the whole month) ---
+  - id: upload_wind_monthly
+    type: io.kestra.plugin.core.flow.If
+    condition: "{{inputs.mode == 'monthly'}}"
+    then:
+      - id: upload_wind_m
+        type: io.kestra.plugin.gcp.gcs.Upload
+        from: "{{outputs.fetch_era5.outputFiles[render(vars.date_year) ~ '-' ~ render(vars.date_month) ~ '_wind.nc']}}"
+        to: "{{render(vars.bronze_dir)}}{{render(vars.date_year)}}-{{render(vars.date_month)}}_wind.nc"
+      - id: upload_solar_m
+        type: io.kestra.plugin.gcp.gcs.Upload
+        from: "{{outputs.fetch_era5.outputFiles[render(vars.date_year) ~ '-' ~ render(vars.date_month) ~ '_solar.nc']}}"
+        to: "{{render(vars.bronze_dir)}}{{render(vars.date_year)}}-{{render(vars.date_month)}}_solar.nc"
+      - id: upload_temp_m
+        type: io.kestra.plugin.gcp.gcs.Upload
+        from: "{{outputs.fetch_era5.outputFiles[render(vars.date_year) ~ '-' ~ render(vars.date_month) ~ '_temp.nc']}}"
+        to: "{{render(vars.bronze_dir)}}{{render(vars.date_year)}}-{{render(vars.date_month)}}_temp.nc"
 
   - id: purge_files
     type: io.kestra.plugin.core.storage.PurgeCurrentExecutionFiles

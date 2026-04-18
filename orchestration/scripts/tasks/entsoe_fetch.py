@@ -18,6 +18,7 @@ import xml.etree.ElementTree as ET
 import json
 from pathlib import Path
 
+import time
 import requests
 from dotenv import load_dotenv
 
@@ -28,7 +29,32 @@ OUTPUT_DIR = Path("bronze/entsoe")
 COUNTRY_CONFIG_PATH = Path(__file__).resolve().parents[2] / "config" / "countries.json"
 
 
-def env_first(*names: str, default: str = "") -> str:
+RETRY_ATTEMPTS = 4
+RETRY_BACKOFF_BASE = 5  # seconds — doubles each attempt: 5, 10, 20, 40
+
+
+def fetch_with_retry(params: dict, timeout: int = 120) -> requests.Response | None:
+    """GET the ENTSO-E API with exponential backoff on rate-limit or server errors."""
+    for attempt in range(1, RETRY_ATTEMPTS + 1):
+        try:
+            resp = requests.get(BASE_URL, params=params, timeout=timeout)
+        except Exception as exc:
+            wait = RETRY_BACKOFF_BASE * (2 ** (attempt - 1))
+            print(f"[WARN] Request error (attempt {attempt}/{RETRY_ATTEMPTS}): {exc} — retrying in {wait}s")
+            time.sleep(wait)
+            continue
+
+        # 429 rate limit or 5xx server error — retry
+        if resp.status_code == 429 or resp.status_code >= 500:
+            wait = RETRY_BACKOFF_BASE * (2 ** (attempt - 1))
+            print(f"[WARN] HTTP {resp.status_code} (attempt {attempt}/{RETRY_ATTEMPTS}) — retrying in {wait}s")
+            time.sleep(wait)
+            continue
+
+        return resp
+
+    print(f"[ERROR] All {RETRY_ATTEMPTS} attempts failed")
+    return None
     for name in names:
         value = os.environ.get(name)
         if value:
@@ -81,9 +107,13 @@ def fetch_generation(country: str, start_date: str, end_date: str) -> bool:
         }
 
         try:
-            resp = requests.get(BASE_URL, params=params, timeout=120)
+            resp = fetch_with_retry(params)
         except Exception as exc:
             print(f"[ERROR] Request failed for {country}/{label}: {exc}")
+            failed = True
+            continue
+
+        if resp is None:
             failed = True
             continue
 

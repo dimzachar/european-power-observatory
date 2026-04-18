@@ -92,13 +92,15 @@ def parse_generation_xml(xml_path: str, country: str) -> pd.DataFrame:
                     except (ValueError, TypeError):
                         continue
 
-                    # Calculate timestamp from start + position * interval
-                    time_str = period.find(".//ns:timeInterval/ns:end", NS)
-                    if time_str is not None:
-                        # Simplified: use date from filename
-                        pass
+                    # Calculate timestamp from period start + (position - 1) * interval
+                    start_el = period.find(".//ns:timeInterval/ns:start", NS)
+                    if start_el is None:
+                        continue
+                    base = pd.Timestamp(start_el.text.strip())
+                    timestamp = base + pd.Timedelta(minutes=interval_minutes * (pos_val - 1))
 
                     rows.append({
+                        "timestamp": timestamp,
                         "country": country,
                         "energy_source": energy_source_readable,
                         "actual_MW": quantity,
