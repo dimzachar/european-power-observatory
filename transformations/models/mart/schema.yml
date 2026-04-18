@@ -4,6 +4,20 @@ models:
       Daily renewable energy share percentage per country.
       Answers: "How green did each country get today/this month/this year?"
       This is the primary dashboard KPI — renewable % of total generation.
+    data_tests:
+      - dbt_utils.recency:
+          arguments:
+            datepart: day
+            field: date_key
+            interval: 2
+            ignore_time_component: true
+          config:
+            severity: warn
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns:
+              - country_code
+              - date_key
     columns:
       - name: date_key
         description: Date of aggregation
@@ -11,14 +25,33 @@ models:
           - not_null
       - name: country_code
         description: ENTSO-E country code
+        data_tests:
+          - not_null
       - name: country_name
         description: Human-readable country name
       - name: renewable_pct
         description: Renewable energy as percentage of total generation
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                max_value: 100
+                inclusive: true
       - name: renewable_mwh
         description: Total renewable generation in MWh
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
       - name: total_mwh
         description: Total generation from all sources in MWh
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
       - name: renewable_sources_active
         description: Count of renewable sources with non-zero generation
       - name: total_sources_active

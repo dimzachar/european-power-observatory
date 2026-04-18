@@ -1,0 +1,89 @@
+models:
+  - name: int_daily_generation
+    description: |
+      Daily generation aggregated by country and energy source.
+      Computes hourly averages, max/min, and percentage of total.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns:
+              - country_code
+              - date_key
+              - energy_source
+    columns:
+      - name: date_key
+        description: Date of aggregation
+        data_tests:
+          - not_null
+      - name: country_code
+        description: ENTSO-E country code
+        data_tests:
+          - not_null
+      - name: country_name
+        description: Human-readable country name
+      - name: energy_source
+        description: Energy source type
+        data_tests:
+          - not_null
+      - name: avg_hourly_mw
+        description: Average hourly generation in MW
+      - name: max_hourly_mw
+        description: Maximum hourly generation in MW
+      - name: min_hourly_mw
+        description: Minimum hourly generation in MW
+      - name: total_mwh
+        description: Total daily generation in MWh
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+      - name: hours_reported
+        description: Number of hours with data
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                max_value: 24
+      - name: total_mwh_all_sources
+        description: Total MWh across all sources for this country/day
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+      - name: pct_of_total
+        description: Percentage of total generation from this source
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                max_value: 100
+
+  - name: int_generation_weather_join
+    description: |
+      Joined generation and weather data for correlation analysis.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns:
+              - country_code
+              - ts_hour
+              - energy_source
+    columns:
+      - name: date_key
+        description: Date of aggregation
+        data_tests:
+          - not_null
+      - name: country_code
+        description: ENTSO-E country code
+        data_tests:
+          - not_null
+      - name: total_mwh
+        description: Total generation in MWh
+      - name: renewable_mwh
+        description: Renewable generation in MWh
+      - name: avg_wind_speed
+        description: Average wind speed across country grid
+      - name: avg_solar_radiation
+        description: Average solar radiation across country grid
+      - name: avg_temperature
+        description: Average temperature across country grid

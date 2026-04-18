@@ -43,6 +43,7 @@ tasks:
       - uv pip install --system lxml pandas pyarrow google-cloud-storage || python -m pip install --user --no-cache-dir lxml pandas pyarrow google-cloud-storage
     env:
       COUNTRY: "{{inputs.country}}"
+      DATE_RANGE: "{{inputs.date_range}}"
       GCS_BUCKET: "{{kv('GCP_BUCKET_NAME')}}"
       GCP_PROJECT_ID: "{{kv('GCP_PROJECT_ID')}}"
       GCP_SERVICE_ACCOUNT: "{{secret('GCP_SERVICE_ACCOUNT')}}"
@@ -51,6 +52,7 @@ tasks:
       import glob
       import json
       import os
+      from datetime import datetime
       from pathlib import Path
 
       import pyarrow as pa
@@ -62,6 +64,7 @@ tasks:
 
       bucket = os.environ["GCS_BUCKET"]
       country = os.environ.get("COUNTRY", "GR")
+      date_range = os.environ.get("DATE_RANGE", "")
       project_id = os.environ.get("GCP_PROJECT_ID", "")
       credentials_info = json.loads(os.environ["GCP_SERVICE_ACCOUNT"])
       credentials = service_account.Credentials.from_service_account_info(credentials_info)
@@ -195,12 +198,36 @@ tasks:
 
           return pd.DataFrame(rows)
 
+      date_range = os.environ.get("DATE_RANGE", "")
+      if date_range:
+          start_str, end_str = date_range.split("/")
+          start_date = datetime.strptime(start_str.strip(), "%Y-%m-%d").date()
+          end_date = datetime.strptime(end_str.strip(), "%Y-%m-%d").date()
+      else:
+          start_date = end_date = None
+
+      def get_file_date(path):
+          try:
+              return datetime.strptime(Path(path).parent.name, "%Y-%m-%d").date()
+          except:
+              return None
+
       dataframes = []
       for xml_path in glob.glob(f"bronze/entsoe/{country}/generation/**/*.xml", recursive=True):
+          file_date = get_file_date(xml_path)
+          if not file_date:
+              continue
+          if start_date and end_date and not (start_date <= file_date <= end_date):
+              continue
           df = parse_generation_xml(xml_path)
           if not df.empty:
               dataframes.append(df)
       for xml_path in glob.glob(f"bronze/entsoe/{country}/dayahead_generation/**/*.xml", recursive=True):
+          file_date = get_file_date(xml_path)
+          if not file_date:
+              continue
+          if start_date and end_date and not (start_date <= file_date <= end_date):
+              continue
           df = parse_forecast_xml(xml_path)
           if not df.empty:
               dataframes.append(df)
@@ -236,6 +263,7 @@ tasks:
       - uv pip install --system xarray pandas numpy pyarrow netCDF4 google-cloud-storage || python -m pip install --user --no-cache-dir xarray pandas numpy pyarrow netCDF4 google-cloud-storage
     env:
       COUNTRY: "{{inputs.country}}"
+      DATE_RANGE: "{{inputs.date_range}}"
       GCS_BUCKET: "{{kv('GCP_BUCKET_NAME')}}"
       GCP_PROJECT_ID: "{{kv('GCP_PROJECT_ID')}}"
       GCP_SERVICE_ACCOUNT: "{{secret('GCP_SERVICE_ACCOUNT')}}"
@@ -243,6 +271,7 @@ tasks:
       """Convert ERA5 NetCDF to Parquet and upload directly to GCS."""
       import json
       import os
+      from datetime import datetime
       from pathlib import Path
 
       import pyarrow as pa
@@ -254,6 +283,7 @@ tasks:
 
       bucket = os.environ["GCS_BUCKET"]
       country = os.environ.get("COUNTRY", "GR")
+      date_range = os.environ.get("DATE_RANGE", "")
       project_id = os.environ.get("GCP_PROJECT_ID", "")
       credentials_info = json.loads(os.environ["GCP_SERVICE_ACCOUNT"])
       credentials = service_account.Credentials.from_service_account_info(credentials_info)
@@ -267,9 +297,32 @@ tasks:
           local_path.parent.mkdir(parents=True, exist_ok=True)
           blob.download_to_filename(str(local_path))
 
+      date_range = os.environ.get("DATE_RANGE", "")
+      if date_range:
+          start_str, end_str = date_range.split("/")
+          start_date = datetime.strptime(start_str.strip(), "%Y-%m-%d").date()
+          end_date = datetime.strptime(end_str.strip(), "%Y-%m-%d").date()
+      else:
+          start_date = end_date = None
+
+      def get_era5_file_date(path):
+          try:
+              filename = Path(path).stem
+              for part in filename.split("_"):
+                  if len(part) == 10 and part[4] == "-" and part[7] == "-":
+                      return datetime.strptime(part, "%Y-%m-%d").date()
+              return None
+          except:
+              return None
+
       all_data = []
       nc_files = list(Path(f"bronze/era5/{country}").rglob("*.nc"))
       for nc_path in nc_files:
+          file_date = get_era5_file_date(nc_path)
+          if not file_date:
+              continue
+          if start_date and end_date and not (start_date <= file_date <= end_date):
+              continue
           ds = xr.open_dataset(nc_path)
           for var_name in ds.data_vars:
               var_data = ds[var_name]

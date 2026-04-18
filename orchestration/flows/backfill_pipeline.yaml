@@ -3,19 +3,14 @@ namespace: european_energy
 
 description: |
   Manual backfill pipeline for one country or all supported countries.
-  Accepts a JSON array of dates, ingests bronze data for each day, then runs one
-  silver refresh per country and one dbt warehouse refresh at the end.
-  Example dates_json:
-  ["2025-03-01", "2025-03-02", "2025-03-03"]
+  Uses Schedule trigger with Kestra backfill to select date range.
+  Date is resolved from trigger.date in variables (like taxi flow).
+  To backfill: use "Execute backfill" from the UI on the trigger.
 
 inputs:
-  - id: dates_json
-    type: STRING
-    defaults: "[\"2025-03-01\", \"2025-03-02\"]"
-
   - id: country
     type: SELECT
-    defaults: "GR"
+    defaults: "ALL"
     values:
       - ALL
       - GR
@@ -27,44 +22,42 @@ inputs:
       - SE
       - IT
 
+variables:
+  date: "{{ trigger.date | date('yyyy-MM-dd') }}"
+
 tasks:
   - id: set_labels
     type: io.kestra.plugin.core.execution.Labels
     labels:
       pipeline: backfill
       country: "{{ inputs.country }}"
-      dates_json: "{{ inputs.dates_json }}"
+      date: "{{ render(vars.date) }}"
 
   - id: process_countries
     type: io.kestra.plugin.core.flow.ForEach
     concurrencyLimit: 1
     values: "{{ fromJson(inputs.country == 'ALL' ? '[\"DE\", \"DK\", \"ES\", \"FR\", \"GR\", \"IT\", \"PL\", \"SE\"]' : '[\"' ~ inputs.country ~ '\"]') }}"
     tasks:
-      - id: ingest_days
-        type: io.kestra.plugin.core.flow.ForEach
-        values: "{{ fromJson(inputs.dates_json) }}"
-        concurrencyLimit: 1
-        tasks:
-          - id: entsoe_ingest_day
-            type: io.kestra.plugin.core.flow.Subflow
-            namespace: european_energy
-            flowId: entsoe_ingest
-            wait: true
-            transmitFailed: true
-            inputs:
-              start_date: "{{ taskrun.value }}"
-              end_date: "{{ (taskrun.value | dateAdd(1, 'DAYS')) | date('yyyy-MM-dd') }}"
-              country: "{{ parent.taskrun.value }}"
+      - id: ingest_day
+        type: io.kestra.plugin.core.flow.Subflow
+        namespace: european_energy
+        flowId: entsoe_ingest
+        wait: true
+        transmitFailed: false
+        inputs:
+          start_date: "{{ render(vars.date) }}"
+          end_date: "{{ render(vars.date) | dateAdd(1, 'DAYS') | date('yyyy-MM-dd') }}"
+          country: "{{ taskrun.value }}"
 
-          - id: era5_ingest_day
-            type: io.kestra.plugin.core.flow.Subflow
-            namespace: european_energy
-            flowId: era5_ingest
-            wait: true
-            transmitFailed: true
-            inputs:
-              date: "{{ taskrun.value }}"
-              country: "{{ parent.taskrun.value }}"
+      - id: era5_ingest_day
+        type: io.kestra.plugin.core.flow.Subflow
+        namespace: european_energy
+        flowId: era5_ingest
+        wait: true
+        transmitFailed: false
+        inputs:
+          date: "{{ render(vars.date) }}"
+          country: "{{ taskrun.value }}"
 
       - id: refresh_silver
         type: io.kestra.plugin.core.flow.Subflow
@@ -74,7 +67,7 @@ tasks:
         transmitFailed: true
         inputs:
           country: "{{ taskrun.value }}"
-          date_range: "{{ inputs.dates_json }}"
+          date_range: "{{ render(vars.date) }}/{{ render(vars.date) }}"
 
   - id: validate_staging
     type: io.kestra.plugin.core.flow.Subflow
@@ -89,3 +82,8 @@ tasks:
     flowId: dbt_mart
     wait: true
     transmitFailed: true
+
+triggers:
+  - id: backfill
+    type: io.kestra.plugin.core.trigger.Schedule
+    cron: "0 6 * * *"

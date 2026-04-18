@@ -17,7 +17,7 @@ with source as (
 
 filtered as (
     select
-        source_ts as ts_hour,
+        timestamp_trunc(source_ts, hour) as ts_hour,
         country as country_code,
         energy_source,
         psr_type as psr_code,
@@ -31,6 +31,17 @@ filtered as (
     where
         source_ts is not null
         and (actual_MW >= 0 or forecast_MW >= 0)
+),
+
+-- Deduplicate: keep one row per (ts_hour, country_code, energy_source),
+-- preferring rows where actual_mw is not null.
+deduped as (
+    select *
+    from filtered
+    qualify row_number() over (
+        partition by ts_hour, country_code, energy_source
+        order by actual_mw desc nulls last
+    ) = 1
 ),
 
 cleaned as (
@@ -55,7 +66,7 @@ cleaned as (
                 abs(actual_mw - forecast_mw) / greatest(forecast_mw, 0.01)
             else null
         end as forecast_error_pct,
-    from filtered
+    from deduped
 )
 
 select * from cleaned

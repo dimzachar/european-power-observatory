@@ -3,6 +3,20 @@ models:
     description: |
       Staging model for ENTSO-E generation data. Standardizes column names,
       filters for Greece, and computes basic derived fields like forecast_error_pct.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns:
+              - country_code
+              - ts_hour
+              - energy_source
+      - dbt_utils.recency:
+          arguments:
+            datepart: hour
+            field: ts_hour
+            interval: 4
+          config:
+            severity: warn
     columns:
       - name: ts_hour
         description: Hourly timestamp
