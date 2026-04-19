@@ -20,7 +20,7 @@ dependencies = [
 ]
 
 [dependency-groups]
-dev = [
+notebook = [
   "ipykernel>=6.29.0",
   "jupyterlab>=4.2.0",
 ]

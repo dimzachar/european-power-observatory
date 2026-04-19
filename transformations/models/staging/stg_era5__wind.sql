@@ -23,7 +23,7 @@ wind_data as (
         variable,
         value,
         date(source_ts) as date_key,
-        extract(hour from source_ts) as hour_of_day,
+        extract(hour from source_ts) as hour_of_day
     from source
     where
         variable in ('u100', 'v100')
@@ -39,7 +39,7 @@ pivoted as (
         lon,
         country,
         max(case when variable = 'u100' then value end) as wind_100m_u,
-        max(case when variable = 'v100' then value end) as wind_100m_v,
+        max(case when variable = 'v100' then value end) as wind_100m_v
     from wind_data
     group by 1, 2, 3, 4, 5, 6
 ),
@@ -56,7 +56,7 @@ with_derived as (
         wind_100m_u,
         wind_100m_v,
         sqrt(wind_100m_u * wind_100m_u + wind_100m_v * wind_100m_v) as wind_speed_100m,
-        atan2(wind_100m_v, wind_100m_u) * 180 / 3.14159265 as wind_direction_degrees,
+        atan2(wind_100m_v, wind_100m_u) * 180 / 3.14159265 as wind_direction_degrees
     from pivoted
 )
 
