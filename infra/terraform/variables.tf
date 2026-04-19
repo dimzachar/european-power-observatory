@@ -12,7 +12,7 @@ variable "location" {
 variable "bq_location" {
   description = "BigQuery dataset location."
   type        = string
-  default     = "EU"
+  default     = "europe-west4"
 }
 
 variable "environment" {
@@ -37,14 +37,8 @@ variable "secret_ids" {
   ]
 }
 
-variable "gcs_bronze_lifecycle_age_days" {
-  description = "Days before incomplete multipart uploads are aborted in the bronze bucket."
-  type        = number
-  default     = 90
-}
-
-variable "gcs_silver_lifecycle_age_days" {
-  description = "Days before incomplete multipart uploads are aborted in the silver bucket."
+variable "gcs_lifecycle_age_days" {
+  description = "Days before incomplete multipart uploads are aborted in the bucket."
   type        = number
   default     = 90
 }

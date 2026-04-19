@@ -1,16 +1,6 @@
-output "gcs_bronze" {
-  description = "GCS bronze bucket URI."
-  value       = google_storage_bucket.bronze.url
-}
-
-output "gcs_silver" {
-  description = "GCS silver bucket URI."
-  value       = google_storage_bucket.silver.url
-}
-
-output "gcs_gold" {
-  description = "GCS gold bucket URI."
-  value       = google_storage_bucket.gold.url
+output "gcs_bucket" {
+  description = "GCS bucket URI (bronze/ and silver/ are path prefixes within this bucket)."
+  value       = google_storage_bucket.main.url
 }
 
 output "bq_dataset_european_energy" {

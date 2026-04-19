@@ -12,23 +12,9 @@ resource "google_bigquery_dataset_iam_member" "pipeline_bq_data_editor" {
   member     = "serviceAccount:${google_service_account.pipeline.email}"
 }
 
-# GCS: read/write objects in bronze bucket (ingestion writes raw XML + NetCDF)
-resource "google_storage_bucket_iam_member" "pipeline_bronze_object_admin" {
-  bucket = google_storage_bucket.bronze.name
-  role   = "roles/storage.objectAdmin"
-  member = "serviceAccount:${google_service_account.pipeline.email}"
-}
-
-# GCS: read/write objects in silver bucket (Spark writes Parquet, dbt reads)
-resource "google_storage_bucket_iam_member" "pipeline_silver_object_admin" {
-  bucket = google_storage_bucket.silver.name
-  role   = "roles/storage.objectAdmin"
-  member = "serviceAccount:${google_service_account.pipeline.email}"
-}
-
-# GCS: read/write objects in gold bucket (optional analytics mirror)
-resource "google_storage_bucket_iam_member" "pipeline_gold_object_admin" {
-  bucket = google_storage_bucket.gold.name
+# GCS: read/write all objects in the single pipeline bucket
+resource "google_storage_bucket_iam_member" "pipeline_bucket_object_admin" {
+  bucket = google_storage_bucket.main.name
   role   = "roles/storage.objectAdmin"
   member = "serviceAccount:${google_service_account.pipeline.email}"
 }

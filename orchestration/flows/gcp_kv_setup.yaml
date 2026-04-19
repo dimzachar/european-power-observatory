@@ -1,0 +1,46 @@
+id: gcp_kv_setup
+namespace: european_energy
+
+description: |
+  Step 1 of 2 for Kestra bootstrap. Run this flow ONCE before any other flows.
+  It populates the KV store with GCP config that all other flows depend on.
+
+  Fill in the placeholder values below before executing:
+    YOUR_GCP_PROJECT_ID  — your GCP project ID, e.g. my-project-123456
+    YOUR_BUCKET_NAME     — globally unique bucket name, e.g. dev-renewable-energy-europe
+    YOUR_GCP_REGION      — GCP region, e.g. europe-west4
+
+  After this flow succeeds, run gcp_setup (Step 2) to create the GCS bucket
+  and BigQuery dataset. If you already ran Terraform, gcp_setup will skip
+  creation safely (ifExists: SKIP) — still run it to confirm connectivity.
+
+tasks:
+  - id: gcp_project_id
+    type: io.kestra.plugin.core.kv.Set
+    key: GCP_PROJECT_ID
+    kvType: STRING
+    value: YOUR_GCP_PROJECT_ID
+
+  - id: gcp_location
+    type: io.kestra.plugin.core.kv.Set
+    key: GCP_LOCATION
+    kvType: STRING
+    value: YOUR_GCP_REGION
+
+  - id: gcp_bucket_name
+    type: io.kestra.plugin.core.kv.Set
+    key: GCP_BUCKET_NAME
+    kvType: STRING
+    value: YOUR_BUCKET_NAME
+
+  - id: gcp_dataset
+    type: io.kestra.plugin.core.kv.Set
+    key: GCP_DATASET
+    kvType: STRING
+    value: european_energy
+
+  - id: cdsapi_url
+    type: io.kestra.plugin.core.kv.Set
+    key: CDSAPI_URL
+    kvType: STRING
+    value: https://cds.climate.copernicus.eu/api
