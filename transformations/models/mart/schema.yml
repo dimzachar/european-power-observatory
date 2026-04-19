@@ -1,4 +1,42 @@
 models:
+  - name: fct_grid_carbon_intensity
+    description: |
+      Daily carbon intensity per country in gCO2/kWh.
+      Answers: "When is the cleanest time to use electricity in country X?"
+      Includes cleanest/dirtiest hour of day per country per day.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns:
+              - country_code
+              - date_key
+    columns:
+      - name: date_key
+        description: Date of aggregation
+        data_tests:
+          - not_null
+      - name: country_code
+        description: ENTSO-E country code
+        data_tests:
+          - not_null
+      - name: avg_carbon_intensity_gco2_kwh
+        description: Daily average carbon intensity in gCO2/kWh
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                max_value: 1200
+      - name: min_carbon_intensity_gco2_kwh
+        description: Lowest hourly carbon intensity of the day
+      - name: max_carbon_intensity_gco2_kwh
+        description: Highest hourly carbon intensity of the day
+      - name: cleanest_hour_of_day
+        description: Hour (0-23) with lowest carbon intensity
+      - name: dirtiest_hour_of_day
+        description: Hour (0-23) with highest carbon intensity
+      - name: daily_intensity_range_gco2_kwh
+        description: Difference between dirtiest and cleanest hour
+
   - name: fct_renewable_kpi
     description: |
       Daily renewable energy share percentage per country.

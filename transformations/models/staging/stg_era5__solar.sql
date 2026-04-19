@@ -23,7 +23,7 @@ solar_data as (
         variable,
         value,
         date(source_ts) as date_key,
-        extract(hour from source_ts) as hour_of_day,
+        extract(hour from source_ts) as hour_of_day
     from source
     where
         variable in ('ssrd', 'tcc', 't2m')
@@ -40,7 +40,7 @@ pivoted as (
         country,
         max(case when variable = 'ssrd' then value end) as solar_radiation_jm2,
         max(case when variable = 'tcc' then value end) as cloud_cover_fraction,
-        max(case when variable = 't2m' then value end) as temp_2m_kelvin,
+        max(case when variable = 't2m' then value end) as temp_2m_kelvin
     from solar_data
     group by 1, 2, 3, 4, 5, 6
 ),
@@ -58,7 +58,7 @@ with_derived as (
         cloud_cover_fraction,
         temp_2m_kelvin,
         round(temp_2m_kelvin - 273.15, 2) as temp_2m_celsius,
-        round(coalesce(solar_radiation_jm2 / 3600.0, 0), 2) as solar_radiation_wm2,
+        round(coalesce(solar_radiation_jm2 / 3600.0, 0), 2) as solar_radiation_wm2
     from pivoted
 )
 

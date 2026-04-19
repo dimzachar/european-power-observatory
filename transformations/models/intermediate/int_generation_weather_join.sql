@@ -11,7 +11,7 @@ with hourly_gen as (
         date_key,
         hour_of_day,
         energy_source,
-        actual_mw,
+        actual_mw
     from {{ ref('stg_entsoe__generation') }}
 ),
 
@@ -20,7 +20,7 @@ hourly_wind as (
         ts_hour,
         country_code,
         country_name,
-        avg(wind_speed_100m) as avg_wind_speed,
+        avg(wind_speed_100m) as avg_wind_speed
     from {{ ref('stg_era5__wind') }}
     group by 1, 2, 3
 ),
@@ -31,7 +31,7 @@ hourly_solar as (
         country_code,
         country_name,
         avg(solar_radiation_wm2) as avg_solar_radiation,
-        avg(temp_2m_celsius) as avg_temp,
+        avg(temp_2m_celsius) as avg_temp
     from {{ ref('stg_era5__solar') }}
     group by 1, 2, 3
 ),
@@ -47,7 +47,7 @@ joined as (
         g.actual_mw,
         w.avg_wind_speed,
         s.avg_solar_radiation,
-        s.avg_temp,
+        s.avg_temp
     from hourly_gen g
     left join hourly_wind w on g.ts_hour = w.ts_hour and g.country_code = w.country_code
     left join hourly_solar s on g.ts_hour = s.ts_hour and g.country_code = s.country_code

@@ -26,7 +26,7 @@ filtered as (
         {{ country_name_from_code('country') }} as country_name,
         date(source_ts) as date_key,
         extract(hour from source_ts) as hour_of_day,
-        extract(month from source_ts) as month_of_year,
+        extract(month from source_ts) as month_of_year
     from source
     where
         source_ts is not null
@@ -65,7 +65,7 @@ cleaned as (
             when actual_mw is not null and forecast_mw is not null then
                 abs(actual_mw - forecast_mw) / greatest(forecast_mw, 0.01)
             else null
-        end as forecast_error_pct,
+        end as forecast_error_pct
     from deduped
 )
 
