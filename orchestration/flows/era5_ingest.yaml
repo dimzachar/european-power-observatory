@@ -55,6 +55,9 @@ tasks:
     env:
       CDSAPI_URL: "{{kv('CDSAPI_URL')}}"
       CDSAPI_KEY: "{{secret('CDSAPI_KEY')}}"
+      GCS_BUCKET: "{{kv('GCP_BUCKET_NAME')}}"
+      GCP_PROJECT_ID: "{{kv('GCP_PROJECT_ID')}}"
+      GCP_SERVICE_ACCOUNT: "{{secret('GCP_SERVICE_ACCOUNT')}}"
     script: |
       import json
       import os
@@ -76,6 +79,27 @@ tasks:
               if user_site not in sys.path:
                   sys.path.append(user_site)
           import cdsapi
+
+      try:
+          from google.cloud import storage
+          from google.oauth2 import service_account
+      except ModuleNotFoundError:
+          subprocess.check_call(["uv", "pip", "install", "--system", "google-cloud-storage"])
+          from google.cloud import storage
+          from google.oauth2 import service_account
+
+      def gcs_blob_exists(bucket_name, blob_path, credentials):
+          client = storage.Client(credentials=credentials)
+          return storage.Client.bucket(client, bucket_name).blob(blob_path).exists()
+
+      _gcs_credentials = None
+      def get_gcs_credentials():
+          global _gcs_credentials
+          if _gcs_credentials is None:
+              sa_json = os.environ.get("GCP_SERVICE_ACCOUNT", "")
+              if sa_json:
+                  _gcs_credentials = service_account.Credentials.from_service_account_info(json.loads(sa_json))
+          return _gcs_credentials
 
       RETRY_ATTEMPTS = 3
       RETRY_BACKOFF_BASE = 30  # seconds: 30, 60, 120
@@ -126,14 +150,30 @@ tasks:
       if mode == "monthly":
           # One CDS request per category covers all days in the month.
           # Each file is named {year}-{month}_{category}.nc and contains all days.
+          # Check GCS first — if the file already exists there, skip the CDS request entirely.
+          # This prevents re-fetching the same month on every day of a backfill run.
+          bucket_name = os.environ.get("GCS_BUCKET", "")
           days_in_month = [f"{d:02d}" for d in range(1, calendar.monthrange(int(year), int(month))[1] + 1)]
           print(f"[ERA5] Monthly mode — {year}-{month} ({len(days_in_month)} days) for {country}")
 
           for category, variables in CATEGORY_VARIABLES.items():
               out_file = output_dir / f"{year}-{month}_{category}.nc"
-              if out_file.exists():
-                  print(f"[SKIP] {out_file} already exists")
-                  continue
+              gcs_path = f"bronze/era5/{country}/{year}/{month}/{year}-{month}_{category}.nc"
+
+              # Skip if already in GCS
+              if bucket_name:
+                  try:
+                      creds = get_gcs_credentials()
+                      if gcs_blob_exists(bucket_name, gcs_path, creds):
+                          print(f"[SKIP] gs://{bucket_name}/{gcs_path} already exists in GCS")
+                          # Still need the local file for the upload task output — download it
+                          gcs_client = storage.Client(credentials=creds)
+                          gcs_client.bucket(bucket_name).blob(gcs_path).download_to_filename(str(out_file))
+                          print(f"[OK] Downloaded existing {out_file} from GCS")
+                          continue
+                  except Exception as e:
+                      print(f"[WARN] GCS existence check failed for {gcs_path}: {e} — will fetch from CDS")
+
               print(f"[ERA5] Fetching {category} monthly ({year}-{month})...")
               ok = retrieve_with_retry(client, "reanalysis-era5-single-levels", {
                   "product_type": ["reanalysis"],

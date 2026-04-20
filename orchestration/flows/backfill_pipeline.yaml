@@ -43,7 +43,7 @@ tasks:
 
   - id: process_countries
     type: io.kestra.plugin.core.flow.ForEach
-    concurrencyLimit: 1
+    concurrencyLimit: 8
     values: "{{ fromJson(inputs.country == 'ALL' ? '[\"DE\", \"DK\", \"ES\", \"FR\", \"GR\", \"IT\", \"PL\", \"SE\"]' : '[\"' ~ inputs.country ~ '\"]') }}"
     tasks:
       - id: ingest_day

@@ -5,11 +5,11 @@ resource "google_project_iam_member" "pipeline_bq_job_user" {
   member  = "serviceAccount:${google_service_account.pipeline.email}"
 }
 
-# BigQuery: read/write tables in the european_energy dataset
-resource "google_bigquery_dataset_iam_member" "pipeline_bq_data_editor" {
-  dataset_id = google_bigquery_dataset.european_energy.dataset_id
-  role       = "roles/bigquery.dataEditor"
-  member     = "serviceAccount:${google_service_account.pipeline.email}"
+# BigQuery: manage datasets and read/write tables project-wide (required for dbt schemas)
+resource "google_project_iam_member" "pipeline_bq_data_editor" {
+  project = var.project_id
+  role    = "roles/bigquery.dataEditor"
+  member  = "serviceAccount:${google_service_account.pipeline.email}"
 }
 
 # GCS: read/write all objects in the single pipeline bucket

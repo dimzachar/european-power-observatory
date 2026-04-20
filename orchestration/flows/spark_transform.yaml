@@ -305,23 +305,37 @@ tasks:
       else:
           start_date = end_date = None
 
-      def get_era5_file_date(path):
+      def get_era5_file_dates(path):
+          """Return (min_date, max_date) covered by this ERA5 file.
+
+          Handles two naming conventions:
+          - Daily:   2026-03-01_wind.nc  → covers just that day
+          - Monthly: 2026-03_wind.nc     → covers the whole month
+          """
+          import calendar
           try:
-              filename = Path(path).stem
-              for part in filename.split("_"):
-                  if len(part) == 10 and part[4] == "-" and part[7] == "-":
-                      return datetime.strptime(part, "%Y-%m-%d").date()
-              return None
-          except:
-              return None
+              stem = Path(path).stem  # e.g. "2026-03_wind" or "2026-03-01_wind"
+              date_part = stem.split("_")[0]
+              if len(date_part) == 10:  # YYYY-MM-DD
+                  d = datetime.strptime(date_part, "%Y-%m-%d").date()
+                  return d, d
+              elif len(date_part) == 7:  # YYYY-MM
+                  y, m = int(date_part[:4]), int(date_part[5:7])
+                  first = datetime(y, m, 1).date()
+                  last = datetime(y, m, calendar.monthrange(y, m)[1]).date()
+                  return first, last
+          except Exception:
+              pass
+          return None, None
 
       all_data = []
       nc_files = list(Path(f"bronze/era5/{country}").rglob("*.nc"))
       for nc_path in nc_files:
-          file_date = get_era5_file_date(nc_path)
-          if not file_date:
+          file_min, file_max = get_era5_file_dates(nc_path)
+          if file_min is None:
               continue
-          if start_date and end_date and not (start_date <= file_date <= end_date):
+          # Include file if its date range overlaps with the requested range
+          if start_date and end_date and (file_max < start_date or file_min > end_date):
               continue
           ds = xr.open_dataset(nc_path)
           for var_name in ds.data_vars:
