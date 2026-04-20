@@ -55,40 +55,7 @@ To answer those questions reliably, the project builds a repeatable batch pipeli
 
 ## Architecture
 
-```
-┌──────────── Sources ────────────┐
-│  ENTSO-E API (XML, hourly)     │
-│  ERA5/CDS (NetCDF, daily)      │
-└──────────┬──────────┬───────────┘
-           │          │
-           ▼          ▼
-┌──── Kestra Orchestration ─────┐
-│  entsoe_ingest.yaml           │
-│  era5_ingest.yaml             │
-│  spark_transform.yaml         │
-│  daily_pipeline.yaml          │
-│  backfill_pipeline.yaml       │
-│  dbt_quality.yaml             │
-│  dbt_mart.yaml                │
-└───────────┬───────────────────┘
-            │
-    ┌───────┴────────┐
-    │  GCS Buckets   │
-    │  bronze/silver │
-    └───────┬────────┘
-            │ external tables
-            ▼
-    ┌───────────────────────────┐
-    │  BigQuery                 │
-    │  european_energy dataset  │
-    │  raw_ / stg_ / int_ / fct_│
-    └───────────┬───────────────┘
-            │
-            ▼
-    ┌──────────────┐
-    │ Looker Studio│
-    └──────────────┘
-```
+![Architecture](images/architecture.png)
 
 ---
 
@@ -144,9 +111,9 @@ To answer those questions reliably, the project builds a repeatable batch pipeli
 │   ├── dbt_project.yml
 │   ├── profiles.yml
 │   ├── models/
-│   │   ├── staging/
-│   │   ├── intermediate/
-│   │   └── mart/
+│   │   ├── staging/                # views over raw external tables
+│   │   ├── intermediate/           # business logic, joins, carbon intensity
+│   │   └── mart/                   # dashboard-facing fact tables
 │   ├── seeds/
 │   └── tests/
 │
@@ -434,22 +401,32 @@ Use `backfill_pipeline` to populate historical data. `daily_pipeline` runs on a 
 
    ![Backfill pipeline Gantt view](images/backfill_pipeline6-gantt.png)
 
-The backfill chains all five steps in order:
+Kestra is the orchestrator that ties every step together. The backfill chains all five flows in order:
 
 ![Flow graph](images/flow-graph.png)
 ```
 entsoe_ingest → era5_ingest → spark_transform → dbt_quality → dbt_mart
 ```
 
-To run steps individually instead:
-
 | Flow | What it does |
 |------|-------------|
-| `entsoe_ingest` | Fetches raw XML → GCS bronze |
-| `era5_ingest` | Fetches raw NetCDF → GCS bronze |
-| `spark_transform` | XML/NetCDF → Parquet → GCS silver |
-| `dbt_quality` | Refreshes raw external tables, builds + tests staging |
-| `dbt_mart` | Seeds dimensions, builds + tests intermediate and mart |
+| `entsoe_ingest` | Fetches raw XML from the ENTSO-E API → GCS bronze |
+| `era5_ingest` | Fetches raw NetCDF from Copernicus CDS → GCS bronze |
+| `spark_transform` | Runs PySpark to parse bronze → clean Parquet → GCS silver |
+| `dbt_quality` | Refreshes raw external tables in BigQuery, builds and tests staging models |
+| `dbt_mart` | Seeds dimension tables, builds and tests intermediate and mart models |
+
+**Spark** (`spark_transform`) handles the format conversion that SQL can't do cheaply. For ENTSO-E it parses IEC 62325 MarketDocument XML — walking each `TimeSeries`, resolving PSR type codes (`B16` → `solar`, `B19` → `wind_onshore`), and reconstructing absolute UTC timestamps from period start + position offset. For ERA5 it flattens 3-D NetCDF variables (time × lat × lon) into long-format Parquet. Both jobs read from `gs://bronze/` and write partitioned Parquet to `gs://silver/`. The local scripts in `spark/scripts/` mirror this logic for dev use; `spark/utils/` holds the shared XML and NetCDF parsing helpers.
+
+**dbt** (`dbt_quality` + `dbt_mart`) runs against BigQuery and is split into three layers, all targeting the single `european_energy` dataset:
+
+- Staging (views) — thin wrappers over the GCS silver external tables: cast types, deduplicate on `(ts_hour, country_code, energy_source)`, add `date_key` and `hour_of_day`. No business logic, just clean inputs.
+- Intermediate (tables) — business logic and cross-source joins: `int_daily_generation` aggregates hourly MW to daily totals and share-of-total per source; `int_generation_weather_join` aligns generation with ERA5 observations; `int_carbon_intensity` estimates hourly gCO₂/kWh per country using standard emission factors per fuel type.
+- Mart (tables) — dashboard-facing fact tables that Looker Studio queries directly: `fct_renewable_kpi` (daily renewable % and MWh per country) and `fct_grid_carbon_intensity` (daily carbon intensity with cleanest/dirtiest hour context per country).
+
+`dbt_quality` runs first and fails the pipeline if staging tests do not pass, so bad source data never reaches the mart.
+
+To run steps individually instead of through `backfill_pipeline`, trigger any of the flows above directly from the Kestra UI.
 
 ---
 
