@@ -6,7 +6,7 @@
 [![BigQuery](https://img.shields.io/badge/BigQuery-Warehouse-4285F4?style=flat-square&logo=googlebigquery&logoColor=white)](https://cloud.google.com/bigquery)
 [![GCP](https://img.shields.io/badge/GCP-Cloud-4285F4?style=flat-square&logo=googlecloud&logoColor=white)](https://cloud.google.com/)
 [![Terraform](https://img.shields.io/badge/Terraform-IaC-844FBA?style=flat-square&logo=terraform&logoColor=white)](https://www.terraform.io/)
-[![Looker Studio](https://img.shields.io/badge/Looker_Studio-Dashboard-4285F4?style=flat-square&logo=googleanalytics&logoColor=white)](https://lookerstudio.google.com/)
+[![Data Studio Dashboard](https://img.shields.io/badge/Looker_Studio-Dashboard-4285F4?style=flat-square&logo=googleanalytics&logoColor=white)](https://datastudio.google.com/s/vF4ZYgjCcTc)
 
 > "Europe says it's going green. Let's measure it."
 
@@ -14,22 +14,25 @@ Data engineering platform that ingests European electricity grid data (ENTSO-E) 
 
 ## Table of contents
 
-- [Problem statement and dataset](#problem-statement-and-dataset)
-- [Architecture](#architecture)
-- [Directory structure](#directory-structure)
-- [Prerequisites](#prerequisites)
-- [Fast path](#fast-path)
-- [Step-by-step setup](#step-by-step-setup)
-  - [Get API keys first](#get-api-keys-first)
-  - [Clone and install](#clone-and-install)
-  - [Provision GCP with Terraform](#provision-gcp-with-terraform)
-  - [Start Kestra](#start-kestra)
-  - [Run the pipeline](#run-the-pipeline)
-  - [Local dev path](#local-dev-path)
-  - [Dashboard](#dashboard)
-- [Quick commands reference](#quick-commands-reference)
-- [Cleanup and destroy](#cleanup-and-destroy)
-- [Contributing](#contributing)
+- [European Renewable Energy Analytics Platform](#european-renewable-energy-analytics-platform)
+  - [Table of contents](#table-of-contents)
+  - [Problem statement and dataset](#problem-statement-and-dataset)
+    - [Datasets](#datasets)
+  - [Architecture](#architecture)
+  - [Directory structure](#directory-structure)
+  - [Prerequisites](#prerequisites)
+  - [A. Fast path](#a-fast-path)
+  - [B. Step-by-step setup](#b-step-by-step-setup)
+    - [Get API keys first](#get-api-keys-first)
+    - [Clone and install](#clone-and-install)
+    - [Provision GCP with Terraform](#provision-gcp-with-terraform)
+    - [Start Kestra](#start-kestra)
+    - [Run the pipeline](#run-the-pipeline)
+    - [Local dev path](#local-dev-path)
+    - [Dashboard](#dashboard)
+  - [Quick commands reference](#quick-commands-reference)
+  - [Cleanup and destroy](#cleanup-and-destroy)
+  - [Contributing](#contributing)
 
 ---
 
@@ -56,6 +59,16 @@ To answer those questions reliably, the project builds a repeatable batch pipeli
 ## Architecture
 
 ![Architecture](images/architecture.png)
+
+| Layer | Tool |
+|-------|------|
+| Infrastructure | Terraform (GCP) |
+| Orchestration | Kestra |
+| Ingestion | Python (ENTSO-E API, Copernicus CDS) |
+| Processing | PySpark |
+| Storage | GCS (bronze/silver), BigQuery |
+| Transformation | dbt |
+| Visualization | Looker Studio |
 
 ---
 
@@ -463,6 +476,8 @@ For dbt authentication locally, use one of:
 ---
 
 ### Dashboard
+
+**Live Dashboard:** https://datastudio.google.com/s/vF4ZYgjCcTc
 
 Full step-by-step instructions for building the Looker Studio report are in [`dashboard/looker-studio-guide.md`](dashboard/looker-studio-guide.md).
 
