@@ -17,14 +17,14 @@ Data engineering platform that ingests European electricity grid data (ENTSO-E) 
 - [Problem statement and dataset](#problem-statement-and-dataset)
 - [Architecture](#architecture)
 - [Directory structure](#directory-structure)
+- [Prerequisites](#prerequisites)
 - [Fast path](#fast-path)
 - [Step-by-step setup](#step-by-step-setup)
-  - [Prerequisites](#prerequisites)
   - [Get API keys first](#get-api-keys-first)
-  - [Phase 1 — Local setup](#phase-1--local-setup)
-  - [Phase 2 — Provision GCP with Terraform](#phase-2--provision-gcp-with-terraform)
-  - [Phase 3 — Start Kestra](#phase-3--start-kestra)
-  - [Phase 4 — Run the pipeline](#phase-4--run-the-pipeline)
+  - [Clone and install](#clone-and-install)
+  - [Provision GCP with Terraform](#provision-gcp-with-terraform)
+  - [Start Kestra](#start-kestra)
+  - [Run the pipeline](#run-the-pipeline)
   - [View results in Looker Studio](#view-results-in-looker-studio)
 - [Local dev path](#local-dev-path)
 - [Verify your setup](#verify-your-setup)
@@ -159,9 +159,24 @@ To answer those questions reliably, the project builds a repeatable batch pipeli
 
 ---
 
+## Prerequisites
+
+Install these tools before starting:
+
+| Tool | Install |
+|------|---------|
+| `uv` (Python env manager) | `curl -LsSf https://astral.sh/uv/install.sh \| sh` · Full guide: https://docs.astral.sh/uv/getting-started/installation/ |
+| Python 3.10+ | Managed by `uv` — no separate install needed |
+| Docker + Docker Compose | https://docs.docker.com/get-docker/ |
+| Google Cloud SDK (`gcloud`) | https://cloud.google.com/sdk/docs/install |
+| Terraform 1.6+ | https://developer.hashicorp.com/terraform/install |
+| Java 11+ | Only needed for local PySpark / notebook work |
+
+---
+
 ## Fast path
 
-If you already have API keys and a GCP project, the full setup is:
+Once prerequisites are installed and you already have API keys and a GCP project, the full fast setup is:
 
 ```bash
 # 1. Clone and install
@@ -173,7 +188,8 @@ make setup
 make env
 nano .env
 
-# 3. Provision GCP (creates SA, bucket, BQ dataset)
+# 3. Provision GCP — copies + fills terraform.tfvars from .env, then applies. If make infra fails with 409 Already Exists, you have existing GCP resources. Either delete them from the GCP console first, or manually import them into Terraform state, check below for import commands.
+
 gcloud auth application-default login
 make infra
 
@@ -196,15 +212,6 @@ make backfill START=2025-03-01 END=2025-03-07 COUNTRY=GR
 
 ## Step-by-step setup
 
-### Prerequisites
-
-- Python 3.10+
-- `uv` — Python environment manager
-- Java 11+ — required only for local PySpark / notebook work
-- Docker + Docker Compose
-- Google Cloud SDK (`gcloud`)
-- Terraform 1.6+
-
 ### Get API keys first
 
 **ENTSO-E** (1-3 working days — request this now):
@@ -215,20 +222,24 @@ make backfill START=2025-03-01 END=2025-03-07 COUNTRY=GR
 **ERA5 / Copernicus CDS** (immediate):
 1. Register at https://cds.climate.copernicus.eu/
 2. Copy your API token from your profile
-3. Accept Terms of Use for the dataset at https://cds.climate.copernicus.eu/cdsapp#!/dataset/reanalysis-era5-single-levels (scroll to bottom of the form)
+3. Accept Terms of Use at https://cds.climate.copernicus.eu/cdsapp#!/dataset/reanalysis-era5-single-levels (scroll to bottom of the form)
 
 ---
 
-### Phase 1 — Local setup
+### Clone and install
 
 ```bash
 git clone https://github.com/dimzachar/european-power-observatory.git
 cd european-power-observatory
-make setup
-make env
+uv sync
+uv run dbt deps --project-dir transformations --profiles-dir transformations
 ```
 
-Edit `.env` with the values you have now:
+Copy and fill `.env`:
+
+```bash
+cp .env.example .env
+```
 
 ```
 ENTSOE_API_KEY=your_api_token_here
@@ -236,20 +247,20 @@ CDSAPI_URL=https://cds.climate.copernicus.eu/api
 CDSAPI_KEY=your_cds_api_key_here
 GCP_PROJECT_ID=your-gcp-project-id
 GCP_REGION=europe-west4
-GCS_BUCKET=dev-renewable-energy-europe   # must match what Terraform will create (see Phase 2)
+GCS_BUCKET=dev-renewable-energy-europe
 COUNTRY=GR
 START_DATE=2025-03-01
 END_DATE=2025-03-07
 ```
 
 > [!NOTE]
-> Leave `.env_encoded` for now — it requires the service account JSON that Terraform creates in Phase 2.
+> Leave `.env_encoded` for now — it requires the service account key that Terraform creates next.
 
 ---
 
-### Phase 2 — Provision GCP with Terraform
+### Provision GCP with Terraform
 
-Terraform creates everything from scratch: the service account, GCS bucket, BigQuery dataset, and Secret Manager slots. You need zero manually created GCP resources.
+Terraform creates everything: service account, GCS bucket, BigQuery dataset, and Secret Manager slots. You need zero manually created GCP resources.
 
 **Authenticate:**
 
@@ -265,27 +276,20 @@ cd infra/terraform
 cp terraform.tfvars.example terraform.tfvars
 ```
 
-<details>
-<summary>Windows (PowerShell)</summary>
-
-```powershell
-cd infra/terraform
-Copy-Item terraform.tfvars.example terraform.tfvars
-```
-</details>
-
 Edit `terraform.tfvars` — set at minimum:
 
 ```hcl
 project_id  = "your-gcp-project-id"
-environment = "dev"   # bucket name will be: dev-renewable-energy-europe
+environment = "dev"   # bucket will be named: dev-renewable-energy-europe
 ```
 
-The GCS bucket name is `{environment}-renewable-energy-europe`. Set `GCS_BUCKET` in `.env` to match.
+Make sure `GCS_BUCKET` in `.env` matches the bucket name.
+
+**Apply:**
 
 ```bash
+terraform init && terraform apply -auto-approve
 cd ../..
-make infra
 ```
 
 <details>
@@ -295,17 +299,45 @@ make infra
 - Service account `european-energy-pipeline` with GCS, BigQuery, and Secret Manager permissions
 - GCS bucket `{environment}-renewable-energy-europe`
 - BigQuery dataset `european_energy`
-- Secret Manager slots (empty — Kestra reads secrets from `.env_encoded` at runtime)
+- Secret Manager slots (empty — populated via `.env_encoded` at Kestra startup)
+
+</details>
+
+<details>
+<summary>If terraform apply fails with 409 Already Exists</summary>
+
+Import the existing resources into Terraform state first. Only import resources that are **not** already in state — check first:
+
+```bash
+cd infra/terraform
+terraform init
+terraform state list   # skip import for any resource already listed here
+```
+
+Then import only what's missing:
+
+```bash
+PROJECT_ID=$(grep '^GCP_PROJECT_ID=' .env | cut -d= -f2 | tr -d '[:space:]')
+BUCKET=$(grep '^GCS_BUCKET=' .env | cut -d= -f2 | tr -d '[:space:]')
+
+# Run only the lines for resources NOT in terraform state list
+terraform import google_bigquery_dataset.european_energy ${PROJECT_ID}/european_energy
+terraform import google_storage_bucket.main ${BUCKET}
+terraform import google_service_account.pipeline projects/${PROJECT_ID}/serviceAccounts/european-energy-pipeline@${PROJECT_ID}.iam.gserviceaccount.com
+
+terraform plan   # verify: no replacements or deletions
+terraform apply -auto-approve
+cd ../..
+```
 
 </details>
 
 **Download the service account key:**
 
 ```bash
-make sa-key
+SA_EMAIL=$(cd infra/terraform && terraform output -raw pipeline_service_account_email)
+gcloud iam service-accounts keys create service-account.json --iam-account=$SA_EMAIL
 ```
-
-This runs `gcloud iam service-accounts keys create` using the SA email from `terraform output`. The key is saved as `service-account.json` in the repo root.
 
 > [!IMPORTANT]
 > `service-account.json` is in `.gitignore`. Never commit it.
@@ -313,79 +345,49 @@ This runs `gcloud iam service-accounts keys create` using the SA email from `ter
 **Generate `.env_encoded`:**
 
 ```bash
-make encode-env
+echo SECRET_GCP_SERVICE_ACCOUNT=$(cat service-account.json | base64 -w 0) > .env_encoded
+echo SECRET_ENTSOE_API_KEY=$(echo -n "$ENTSOE_API_KEY" | base64 -w 0) >> .env_encoded
+echo SECRET_CDSAPI_KEY=$(echo -n "$CDSAPI_KEY" | base64 -w 0) >> .env_encoded
 ```
 
-This base64-encodes `service-account.json`, `ENTSOE_API_KEY`, and `CDSAPI_KEY` from `.env` into `.env_encoded`, which Kestra reads at startup.
-
-<details>
-<summary>If GCS bucket or BigQuery dataset already exist</summary>
-
-Import them into Terraform state instead of letting it create new ones:
-
-```bash
-cd infra/terraform
-terraform init
-
-# check existing resource names
-gcloud storage buckets list --project=YOUR_GCP_PROJECT
-gcloud bigquery datasets list --project=YOUR_GCP_PROJECT
-
-# import
-terraform import google_storage_bucket.main YOUR_EXISTING_BUCKET
-terraform import google_bigquery_dataset.european_energy YOUR_GCP_PROJECT:european_energy
-
-# if a service account already exists
-terraform import google_service_account.pipeline projects/YOUR_GCP_PROJECT/serviceAccounts/YOUR_SA_EMAIL
-
-terraform plan   # verify no replacements or deletions before applying
-terraform apply
-cd ../..
-```
-
-</details>
 
 ---
 
-### Phase 3 — Start Kestra
+### Start Kestra
 
 ```bash
-make docker-up
+docker compose up -d
 ```
 
 Kestra starts at **http://localhost:8080** (login: `admin@kestra.io` / `Admin1234!`).
 
-Once it's up, upload all flows and push KV config in one step:
+Upload all flows via UI: **Flows → Import** → select all YAML files from `orchestration/flows/`.
+
+Push KV config (Kestra needs these to run any flow):
 
 ```bash
-make kestra-bootstrap
+source .env
+for kv in \
+  "GCP_PROJECT_ID=$GCP_PROJECT_ID" \
+  "GCP_LOCATION=$GCP_REGION" \
+  "GCP_BUCKET_NAME=$GCS_BUCKET" \
+  "GCP_DATASET=european_energy" \
+  "CDSAPI_URL=https://cds.climate.copernicus.eu/api"; do
+  KEY=$(echo $kv | cut -d= -f1)
+  VAL=$(echo $kv | cut -d= -f2-)
+  curl -X PUT "http://localhost:8080/api/v1/namespaces/european_energy/kv/$KEY" \
+    -H "Content-Type: application/json" -d "\"$VAL\""
+done
 ```
 
-This:
-- waits for Kestra to be ready
-- uploads all YAML flows from `orchestration/flows/`
-- pushes `GCP_PROJECT_ID`, `GCP_LOCATION`, `GCP_BUCKET_NAME`, `GCP_DATASET`, and `CDSAPI_URL` to the Kestra KV store, reading values from your `.env`
-
 > [!NOTE]
-> If you ran Terraform, skip `gcp_setup` — the bucket and dataset already exist. `gcp_setup` is only needed if you created GCP resources manually without Terraform. It uses `ifExists: SKIP` so it's safe to run either way, but it's not required.
+> If you ran Terraform, skip `gcp_setup` — bucket and dataset already exist. `gcp_setup` is only needed if you created GCP resources manually without Terraform.
 
 ---
 
-### Phase 4 — Run the pipeline
+### Run the pipeline
 
 Use `backfill_pipeline` to populate historical data. `daily_pipeline` runs on a schedule automatically — do not trigger it manually.
-
-**Via make (recommended):**
-
-```bash
-# Single country
-make backfill START=2025-03-01 END=2025-03-07 COUNTRY=GR
-
-# All countries
-make backfill START=2025-03-01 END=2025-03-07 COUNTRY=ALL
-```
-
-**Via Kestra UI:**
 
 1. Go to http://localhost:8080 → namespace `european_energy`
 2. Open `backfill_pipeline` → Triggers tab → click "Execute backfill"

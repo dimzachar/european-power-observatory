@@ -32,8 +32,20 @@ setup:
 	uv run dbt deps --project-dir transformations --profiles-dir transformations
 
 # ── Infrastructure ───────────────────────────────────────────────────────────
-
 infra:
+	@test -f .env || (echo "ERROR: .env not found. Run 'make env' first." && exit 1)
+	@if [ ! -f infra/terraform/terraform.tfvars ]; then \
+	  PROJECT_ID=$$(grep '^GCP_PROJECT_ID=' .env | cut -d= -f2 | tr -d '[:space:]'); \
+	  REGION=$$(grep '^GCP_REGION=' .env | cut -d= -f2 | tr -d '[:space:]'); \
+	  cp infra/terraform/terraform.tfvars.example infra/terraform/terraform.tfvars; \
+	  sed -i "s|your-gcp-project-id|$$PROJECT_ID|" infra/terraform/terraform.tfvars; \
+	  sed -i "s|europe-west4|$$REGION|g" infra/terraform/terraform.tfvars; \
+	  sed -i "s|owner = \"your-name\"|owner = \"pipeline\"|" infra/terraform/terraform.tfvars; \
+	  echo "Generated infra/terraform/terraform.tfvars (project_id=$$PROJECT_ID, location=$$REGION)"; \
+	  echo "Review infra/terraform/terraform.tfvars and update the owner label if needed."; \
+	else \
+	  echo "infra/terraform/terraform.tfvars already exists — using as-is"; \
+	fi
 	cd infra/terraform && terraform init && terraform apply -auto-approve
 	@echo ""
 	@echo "Terraform done. Next: make sa-key"
