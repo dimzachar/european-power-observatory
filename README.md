@@ -174,43 +174,56 @@ Install these tools before starting:
 
 ---
 
-## Fast path
+## A. Fast path
 
 Once prerequisites are installed and you already have API keys and a GCP project, the full fast setup is:
 
+**1. Clone and install**
+
 ```bash
-# 1. Clone and install
 git clone https://github.com/dimzachar/european-power-observatory.git
 cd european-power-observatory
 make setup
+```
 
-# 2. Fill in .env (API keys + GCP_PROJECT_ID + GCS_BUCKET)
+**2. Fill in .env (API keys + GCP_PROJECT_ID + GCS_BUCKET)**
+
+```bash
 make env
 nano .env
-
-# 3. Provision GCP — copies + fills terraform.tfvars from .env, then applies. If make infra fails with 409 Already Exists, you have existing GCP resources. Either delete them from the GCP console first, or manually import them into Terraform state, check below for import commands.
-
-gcloud auth application-default login
-make infra
-
-# 4. Download SA key and generate .env_encoded
-make sa-key
-make encode-env
-
-# 5. Start Kestra, upload flows, push KV config
-make docker-up
-make kestra-bootstrap
-
-# 6. Run the pipeline (backfill your date range)
-make backfill START=2025-03-01 END=2025-03-07 COUNTRY=GR
 ```
 
 > [!IMPORTANT]
 > ENTSO-E API approval takes 1-3 working days. Request access before anything else — see [Get API keys first](#get-api-keys-first).
 
+**3. Provision GCP** — copies + fills terraform.tfvars from .env, then applies. If `make infra` fails with `409 Already Exists`, you have existing GCP resources. Either delete them from the GCP console first, or manually import them into Terraform state — check below for import commands.
+
+```bash
+gcloud auth application-default login
+make infra
+```
+
+**4. Download SA key and generate .env_encoded**
+
+```bash
+make sa-key
+make encode-env
+```
+
+**5. Start Kestra, upload flows, push KV config**
+
+```bash
+make docker-up
+```
+
+See [Start Kestra](#start-kestra) for the full instructions.
+
+- On Kestra UI (`http://localhost:8080`), go to Flows → Import all YAML files from `orchestration/flows/`. 
+- Run the pipeline (backfill your date range): `backfill_pipeline` → Triggers tab → Execute backfill → pick date range and country.
+
 ---
 
-## Step-by-step setup
+## B. Step-by-step setup
 
 ### Get API keys first
 
@@ -486,8 +499,8 @@ make infra            # terraform init + apply
 make sa-key           # download SA JSON key (after terraform apply)
 make encode-env       # generate .env_encoded from .env + service-account.json
 make docker-up        # start Kestra at localhost:8080
-make kestra-bootstrap # upload flows + push KV config
-make backfill START=2025-03-01 END=2025-03-07 COUNTRY=GR
+# Then manually: upload flows via Kestra UI + push KV config (see step-by-step setup)
+# Then manually: trigger backfill_pipeline in Kestra UI (see "Run the pipeline")
 make docker-down
 make clean
 ```

@@ -13,10 +13,11 @@ resource "google_secret_manager_secret" "runtime" {
 
 # Grant pipeline SA access to each secret
 resource "google_secret_manager_secret_iam_member" "pipeline_secret_accessor" {
-  for_each = google_secret_manager_secret.runtime
+  for_each  = toset(var.secret_ids)
+  depends_on = [google_secret_manager_secret.runtime]
 
   project   = var.project_id
-  secret_id = each.value.secret_id
+  secret_id = each.value
   role      = "roles/secretmanager.secretAccessor"
   member    = "serviceAccount:${google_service_account.pipeline.email}"
 }

@@ -1,6 +1,6 @@
 project_id  = "your-gcp-project-id"
 location    = "europe-west4"
-bq_location = "EU"
+bq_location = "europe-west4"
 environment = "dev"
 
 # Extra labels applied to all resources
