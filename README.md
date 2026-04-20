@@ -477,6 +477,8 @@ For dbt authentication locally, use one of:
 
 ### Dashboard
 
+![Country Performance Dashboard](dashboard/P1-Country-Performance.png)
+
 **Live Dashboard:** https://datastudio.google.com/s/vF4ZYgjCcTc
 
 Full step-by-step instructions for building the Looker Studio report are in [`dashboard/looker-studio-guide.md`](dashboard/looker-studio-guide.md).
