@@ -19,6 +19,13 @@ resource "google_storage_bucket_iam_member" "pipeline_bucket_object_admin" {
   member = "serviceAccount:${google_service_account.pipeline.email}"
 }
 
+# GCS: bucket-level read + update (storage.buckets.get/update) — required by Kestra CreateBucket ifExists check
+resource "google_storage_bucket_iam_member" "pipeline_bucket_legacy_reader" {
+  bucket = google_storage_bucket.main.name
+  role   = "roles/storage.legacyBucketOwner"
+  member = "serviceAccount:${google_service_account.pipeline.email}"
+}
+
 # Secret Manager: allow pipeline SA to read runtime secrets
 resource "google_project_iam_member" "pipeline_secret_accessor" {
   project = var.project_id

@@ -10,7 +10,7 @@
 
 > "Europe says it's going green. Let's measure it."
 
-Data engineering platform that ingests European electricity grid data (ENTSO-E) and meteorological observations (ERA5), transforms them into a dimensional analytics model, and surfaces actionable energy insights. Supports `DE`, `DK`, `ES`, `FR`, `GR`, `IT`, `PL`, `SE` — run a single country or all at once.
+Data engineering platform that ingests European electricity grid data (ENTSO-E) and meteorological observations (ERA5), transforms them into a dimensional analytics model, and surfaces actionable energy insights. Supports `DE`, `DK`, `ES`, `FR`, `GR`, `IT`, `PL`, `SE`. Run a single country or all at once.
 
 ## Table of contents
 
@@ -48,8 +48,8 @@ To answer those questions reliably, the project builds a repeatable batch pipeli
 
 ### Datasets
 
-- [ENTSO-E Transparency Platform](https://transparency.entsoe.eu/) — hourly electricity generation by fuel type (XML), covering `DE`, `DK`, `ES`, `FR`, `GR`, `IT`, `PL`, `SE`
-- [ERA5 / Copernicus CDS](https://cds.climate.copernicus.eu/) — daily reanalysis weather observations (NetCDF): wind speed, solar radiation, temperature
+- [ENTSO-E Transparency Platform](https://transparency.entsoe.eu/): hourly electricity generation by fuel type (XML), covering `DE`, `DK`, `ES`, `FR`, `GR`, `IT`, `PL`, `SE`
+- [ERA5 / Copernicus CDS](https://cds.climate.copernicus.eu/): daily reanalysis weather observations (NetCDF): wind speed, solar radiation, temperature
 
 ---
 
@@ -100,7 +100,7 @@ To answer those questions reliably, the project builds a repeatable batch pipeli
 ├── .env.example
 ├── Makefile
 │
-├── infra/terraform/                # Terraform — GCP infra
+├── infra/terraform/                # Terraform, GCP infra
 │   ├── versions.tf
 │   ├── providers.tf
 │   ├── variables.tf
@@ -108,7 +108,7 @@ To answer those questions reliably, the project builds a repeatable batch pipeli
 │   ├── apis.tf                     # enables required GCP APIs
 │   ├── service_accounts.tf         # pipeline service account
 │   ├── iam.tf                      # IAM bindings (GCS + BQ + Secret Manager)
-│   ├── secrets.tf                  # Secret Manager slots (empty — populated by Kestra)
+│   ├── secrets.tf                  # Secret Manager slots (empty, populated by Kestra)
 │   ├── gcs.tf                      # GCS bucket
 │   ├── bigquery.tf                 # BigQuery dataset: european_energy
 │   ├── outputs.tf
@@ -121,8 +121,8 @@ To answer those questions reliably, the project builds a repeatable batch pipeli
 │   │   ├── entsoe_ingest.yaml
 │   │   ├── era5_ingest.yaml
 │   │   ├── spark_transform.yaml
-│   │   ├── daily_pipeline.yaml     # scheduled — runs automatically, do not trigger manually
-│   │   ├── backfill_pipeline.yaml  # manual historical replay — use this to populate data
+│   │   ├── daily_pipeline.yaml     # scheduled, runs automatically. Do not trigger manually
+│   │   ├── backfill_pipeline.yaml  # manual historical replay, use this to populate data
 │   │   ├── dbt_quality.yaml
 │   │   ├── dbt_mart.yaml
 │   │   ├── gcp_kv_setup.yaml       # one-time KV bootstrap (automated by make kestra-bootstrap)
@@ -134,8 +134,8 @@ To answer those questions reliably, the project builds a repeatable batch pipeli
 │
 ├── spark/
 │   ├── scripts/
-│   │   ├── entsoe_to_parquet.py    # local reference only — production parsing runs in spark_transform.yaml
-│   │   └── era5_to_parquet.py      # local helper only — does not stamp a country column
+│   │   ├── entsoe_to_parquet.py    # local reference only, production parsing runs in spark_transform.yaml
+│   │   └── era5_to_parquet.py      # local helper only, does not stamp a country column
 │   └── utils/
 │       ├── entsoe_xml_parser.py
 │       └── era5_netcdf_helpers.py
@@ -167,7 +167,7 @@ Install these tools before starting:
 |------|---------|
 | `Make` | Required for the fast path (`make` commands) |
 | `uv` (Python env manager) | `curl -LsSf https://astral.sh/uv/install.sh \| sh` · Full guide: https://docs.astral.sh/uv/getting-started/installation/ |
-| Python 3.10+ | Managed by `uv` — no separate install needed |
+| Python 3.10+ | Managed by `uv`, no separate install needed |
 | Docker + Docker Compose | https://docs.docker.com/get-docker/ |
 | Google Cloud SDK (`gcloud`) | https://cloud.google.com/sdk/docs/install |
 | Terraform 1.6+ | https://developer.hashicorp.com/terraform/install |
@@ -195,9 +195,9 @@ nano .env
 ```
 
 > [!IMPORTANT]
-> ENTSO-E API approval takes 1-3 working days. Request access before anything else — see [Get API keys first](#get-api-keys-first).
+> ENTSO-E API approval takes 1-3 working days. Request access before anything else. See [Get API keys first](#get-api-keys-first).
 
-**3. Provision GCP** — copies + fills terraform.tfvars from .env, then applies. If `make infra` fails with `409 Already Exists`, you have existing GCP resources. Either delete them from the GCP console first, or manually import them into Terraform state — check below for import commands.
+**3. Provision GCP**: derives `environment` from `GCS_BUCKET` prefix in `.env`, generates terraform.tfvars, then applies. If `make infra` fails with `409 Already Exists`, you have existing GCP resources. Either delete them from the GCP console first, or manually import them into Terraform state. Check below for import commands.
 
 ```bash
 make gcp-auth
@@ -219,7 +219,8 @@ make docker-up
 
 See [Start Kestra](#start-kestra) for the full instructions.
 
-- On Kestra UI (`http://localhost:8080`), go to Flows → Import all YAML files from `orchestration/flows/`. 
+- Flows load automatically. Go to `http://localhost:8080` → Flows → confirm the `european_energy` namespace is present.
+- Run `gcp_kv_setup` then `gcp_setup` to bootstrap KV config and GCP resources.
 - Run the pipeline (backfill your date range): `backfill_pipeline` → Triggers tab → Execute backfill → pick date range and country.
 
 ---
@@ -228,7 +229,7 @@ See [Start Kestra](#start-kestra) for the full instructions.
 
 ### Get API keys first
 
-**ENTSO-E** (1-3 working days — request this now):
+**ENTSO-E** (1-3 working days, request this now):
 1. Register at https://www.entsoe.eu/
 2. Email `transparency@entsoe.eu`, subject: `Restful API access`, include your registration email
 3. Once approved: My Account Settings → Generate API Token
@@ -261,7 +262,7 @@ CDSAPI_URL=https://cds.climate.copernicus.eu/api
 CDSAPI_KEY=your_cds_api_key_here
 GCP_PROJECT_ID=your-gcp-project-id
 GCP_REGION=europe-west4
-GCS_BUCKET=dev-renewable-energy-europe
+GCS_BUCKET=dev-renewable-energy-europe   # prefix (dev/prod/etc.) drives the Terraform environment
 COUNTRY=GR
 START_DATE=2025-03-01
 END_DATE=2025-03-07
@@ -292,19 +293,24 @@ cd infra/terraform
 cp terraform.tfvars.example terraform.tfvars
 ```
 
-Edit `terraform.tfvars` — set at minimum:
+Edit `terraform.tfvars`, set at minimum:
 
 ```hcl
 project_id  = "your-gcp-project-id"
 environment = "dev"   # bucket will be named: dev-renewable-energy-europe
 ```
 
-Make sure `GCS_BUCKET` in `.env` matches the bucket name.
+> [!IMPORTANT]
+> `environment` in `terraform.tfvars` and the prefix of `GCS_BUCKET` in `.env` must match.
+> - `environment = "dev"` → Terraform creates `dev-renewable-energy-europe` → set `GCS_BUCKET=dev-renewable-energy-europe`
+> - `environment = "prod"` → Terraform creates `prod-renewable-energy-europe` → set `GCS_BUCKET=prod-renewable-energy-europe`
+>
+> If they differ, your flows will point at a bucket that doesn't exist.
 
 **Apply:**
 
 ```bash
-terraform init && terraform apply -auto-approve
+terraform init && terraform apply -auto-approve -var="environment=dev"
 cd ../..
 ```
 
@@ -315,14 +321,14 @@ cd ../..
 - Service account `european-energy-pipeline` with GCS, BigQuery, and Secret Manager permissions
 - GCS bucket `{environment}-renewable-energy-europe`
 - BigQuery dataset `european_energy`
-- Secret Manager slots (empty — populated via `.env_encoded` at Kestra startup)
+- Secret Manager slots (empty, populated via `.env_encoded` at Kestra startup)
 
 </details>
 
 <details>
 <summary>If terraform apply fails with 409 Already Exists</summary>
 
-Import the existing resources into Terraform state first. Only import resources that are **not** already in state — check first:
+Import the existing resources into Terraform state first. Only import resources that are **not** already in state. Check first:
 
 ```bash
 cd infra/terraform
@@ -375,41 +381,62 @@ echo SECRET_CDSAPI_KEY=$(echo -n "$CDSAPI_KEY" | base64 -w 0) >> .env_encoded
 docker compose up -d
 ```
 
-Kestra starts at **http://localhost:8080** (login: `admin@kestra.io` / `Admin1234!`).
-
-Upload all flows via UI: **Flows → Import** → select all YAML files from `orchestration/flows/`.
-
-Push KV config (Kestra needs these to run any flow):
-
-```bash
-source .env
-for kv in \
-  "GCP_PROJECT_ID=$GCP_PROJECT_ID" \
-  "GCP_LOCATION=$GCP_REGION" \
-  "GCP_BUCKET_NAME=$GCS_BUCKET" \
-  "GCP_DATASET=european_energy" \
-  "CDSAPI_URL=https://cds.climate.copernicus.eu/api"; do
-  KEY=$(echo $kv | cut -d= -f1)
-  VAL=$(echo $kv | cut -d= -f2-)
-  curl -X PUT "http://localhost:8080/api/v1/namespaces/european_energy/kv/$KEY" \
-    -H "Content-Type: application/json" -d "\"$VAL\""
-done
-```
+Kestra starts at `http://localhost:8080`.
 
 > [!NOTE]
-> If you ran Terraform, skip `gcp_setup` — bucket and dataset already exist. `gcp_setup` is only needed if you created GCP resources manually without Terraform.
+> Default login: `admin@kestra.io` / `Admin1234!`
+> To change the credentials, update the values in `docker-compose.yml` before starting the container.
+
+All flows in `orchestration/flows/` are loaded automatically at startup via `--flow-path`. No manual import needed.
+
+Push KV config and create GCP resources using the two bootstrap flows:
+
+1. In the Kestra UI, open flow `gcp_kv_setup` (Step 1 of 2).
+   Edit the inputs at the top of the flow, replace the three placeholders with your actual values:
+   - `YOUR_GCP_PROJECT_ID` → your GCP project ID
+   - `YOUR_BUCKET_NAME` → your GCS bucket name (must match `GCS_BUCKET` in `.env`)
+   - `YOUR_GCP_REGION` → your GCP region (e.g. `europe-west4`)
+
+   Then execute the flow. This populates the KV store that all other flows depend on.
+
+   ![gcp_kv_setup flow](images/gcp_kv_setup.png)
+
+2. Open flow `gcp_setup` (Step 2 of 2) and execute it.
+   This creates the GCS bucket and BigQuery dataset. If you already ran Terraform, it skips creation safely (`ifExists: SKIP`). Still run it to confirm connectivity.
+
+   ![gcp_setup flow](images/gcp_setup.png)
+
+> [!NOTE]
+> If you ran Terraform, skip `gcp_setup`. Bucket and dataset already exist. `gcp_setup` is only needed if you created GCP resources manually without Terraform.
 
 ---
 
 ### Run the pipeline
 
-Use `backfill_pipeline` to populate historical data. `daily_pipeline` runs on a schedule automatically — do not trigger it manually.
+Use `backfill_pipeline` to populate historical data. `daily_pipeline` runs on a schedule automatically, do not trigger it manually.
 
-1. Go to http://localhost:8080 → namespace `european_energy`
+1. Go to `http://localhost:8080` → Flows (the `european_energy` namespace will be pre-selected)
 2. Open `backfill_pipeline` → Triggers tab → click "Execute backfill"
+
+   ![Backfill pipeline overview](images/backfill_pipeline1.png)
+
+   ![Backfill pipeline flows](images/backfill_pipeline2.png)
+
 3. Select your date range and country
 
+   ![Backfill pipeline trigger](images/backfill_pipeline3-trigger.png)
+
+   ![Backfill pipeline date selection](images/backfill_pipeline4-dates.png)
+
+4. Monitor execution progress
+
+   ![Backfill pipeline execution](images/backfill_pipeline5-exec.png)
+
+   ![Backfill pipeline Gantt view](images/backfill_pipeline6-gantt.png)
+
 The backfill chains all five steps in order:
+
+![Flow graph](images/flow-graph.png)
 ```
 entsoe_ingest → era5_ingest → spark_transform → dbt_quality → dbt_mart
 ```
@@ -502,7 +529,7 @@ make infra            # terraform init + apply
 make sa-key           # download SA JSON key (after terraform apply)
 make encode-env       # generate .env_encoded from .env + service-account.json
 make docker-up        # start Kestra at localhost:8080
-# Then manually: upload flows via Kestra UI + push KV config (see step-by-step setup)
+# Then manually: upload flows via Kestra UI + run gcp_kv_setup then gcp_setup (see step-by-step setup)
 # Then manually: trigger backfill_pipeline in Kestra UI (see "Run the pipeline")
 make docker-down
 make clean

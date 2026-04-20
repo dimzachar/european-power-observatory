@@ -46,23 +46,38 @@ setup:
 	uv run dbt deps --project-dir transformations --profiles-dir transformations
 
 # ── Infrastructure ───────────────────────────────────────────────────────────
+# Derives terraform environment from GCS_BUCKET in .env.
+# GCS_BUCKET must follow the pattern <env>-renewable-energy-europe
+# e.g. dev-renewable-energy-europe  → environment=dev
+#      prod-renewable-energy-europe → environment=prod
 infra:
 	@test -f .env || (echo "ERROR: .env not found. Run 'make env' first." && exit 1)
-	@if [ ! -f infra/terraform/terraform.tfvars ]; then \
-	  PROJECT_ID=$$(grep '^GCP_PROJECT_ID=' .env | cut -d= -f2 | tr -d '[:space:]'); \
+	@PROJECT_ID=$$(grep '^GCP_PROJECT_ID=' .env | cut -d= -f2 | tr -d '[:space:]'); \
 	  REGION=$$(grep '^GCP_REGION=' .env | cut -d= -f2 | tr -d '[:space:]'); \
-	  cp infra/terraform/terraform.tfvars.example infra/terraform/terraform.tfvars; \
-	  sed -i "s|your-gcp-project-id|$$PROJECT_ID|" infra/terraform/terraform.tfvars; \
-	  sed -i "s|europe-west4|$$REGION|g" infra/terraform/terraform.tfvars; \
-	  sed -i "s|owner = \"your-name\"|owner = \"pipeline\"|" infra/terraform/terraform.tfvars; \
-	  echo "Generated infra/terraform/terraform.tfvars (project_id=$$PROJECT_ID, location=$$REGION)"; \
-	  echo "Review infra/terraform/terraform.tfvars and update the owner label if needed."; \
-	else \
-	  echo "infra/terraform/terraform.tfvars already exists — using as-is"; \
-	fi
-	cd infra/terraform && terraform init && terraform apply -auto-approve
+	  BUCKET=$$(grep '^GCS_BUCKET=' .env | cut -d= -f2 | tr -d '[:space:]'); \
+	  ENV=$$(echo "$$BUCKET" | sed 's/-renewable-energy-europe$$//'); \
+	  if [ -z "$$ENV" ] || [ "$$ENV" = "$$BUCKET" ]; then \
+	    echo "ERROR: GCS_BUCKET='$$BUCKET' is missing an environment prefix."; \
+	    echo "       Expected pattern : <env>-renewable-energy-europe"; \
+	    echo "       Examples         : dev-renewable-energy-europe"; \
+	    echo "                        : prod-renewable-energy-europe"; \
+	    echo "       Fix .env and re-run make infra."; \
+	    exit 1; \
+	  fi; \
+	  echo "Derived environment=$$ENV from GCS_BUCKET=$$BUCKET (Terraform will create bucket: $$BUCKET)"; \
+	  if [ ! -f infra/terraform/terraform.tfvars ]; then \
+	    cp infra/terraform/terraform.tfvars.example infra/terraform/terraform.tfvars; \
+	    sed -i "s|your-gcp-project-id|$$PROJECT_ID|" infra/terraform/terraform.tfvars; \
+	    sed -i "s|europe-west4|$$REGION|g" infra/terraform/terraform.tfvars; \
+	    sed -i "s|owner = \"your-name\"|owner = \"pipeline\"|" infra/terraform/terraform.tfvars; \
+	    echo "Generated infra/terraform/terraform.tfvars (project_id=$$PROJECT_ID, location=$$REGION, environment=$$ENV)"; \
+	  else \
+	    echo "infra/terraform/terraform.tfvars already exists — using as-is"; \
+	  fi; \
+	  cd infra/terraform && terraform init && terraform apply -auto-approve -var="environment=$$ENV"
 	@echo ""
 	@echo "Terraform done. Next: make sa-key"
+
 
 # ── Docker / Kestra ──────────────────────────────────────────────────────────
 
