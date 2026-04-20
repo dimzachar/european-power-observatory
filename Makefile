@@ -1,10 +1,24 @@
-.PHONY: env encode-env sa-key setup docker-up docker-down infra \
+.PHONY: env gcp-auth encode-env sa-key setup docker-up docker-down infra \
         entsoe-ingest era5-ingest spark-transform dbt-run test clean
 
 # ── Environment ──────────────────────────────────────────────────────────────
 
 env:
 	@if [ ! -f .env ]; then cp .env.example .env; echo "Created .env — fill in your API keys and GCP_PROJECT_ID"; else echo ".env already exists"; fi
+
+# Authenticate gcloud CLI and ADC using the project ID from .env
+gcp-auth:
+	@test -f .env || (echo "ERROR: .env not found. Run 'make env' first." && exit 1)
+	@PROJECT_ID=$$(grep '^GCP_PROJECT_ID=' .env | cut -d= -f2 | tr -d '[:space:]'); \
+	if [ -z "$$PROJECT_ID" ] || [ "$$PROJECT_ID" = "your-gcp-project-id" ]; then \
+	  echo "ERROR: Please set a valid GCP_PROJECT_ID in .env first."; \
+	  exit 1; \
+	fi; \
+	echo "Authenticating gcloud for project $$PROJECT_ID..."; \
+	gcloud auth login && \
+	gcloud config set project $$PROJECT_ID && \
+	gcloud auth application-default login && \
+	gcloud auth application-default set-quota-project $$PROJECT_ID
 
 # Generate .env_encoded from .env + service-account.json
 # Requires: .env is filled in, service-account.json exists in repo root

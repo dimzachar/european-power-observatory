@@ -165,6 +165,7 @@ Install these tools before starting:
 
 | Tool | Install |
 |------|---------|
+| `Make` | Required for the fast path (`make` commands) |
 | `uv` (Python env manager) | `curl -LsSf https://astral.sh/uv/install.sh \| sh` · Full guide: https://docs.astral.sh/uv/getting-started/installation/ |
 | Python 3.10+ | Managed by `uv` — no separate install needed |
 | Docker + Docker Compose | https://docs.docker.com/get-docker/ |
@@ -199,7 +200,7 @@ nano .env
 **3. Provision GCP** — copies + fills terraform.tfvars from .env, then applies. If `make infra` fails with `409 Already Exists`, you have existing GCP resources. Either delete them from the GCP console first, or manually import them into Terraform state — check below for import commands.
 
 ```bash
-gcloud auth application-default login
+make gcp-auth
 make infra
 ```
 
@@ -265,10 +266,6 @@ COUNTRY=GR
 START_DATE=2025-03-01
 END_DATE=2025-03-07
 ```
-
-> [!NOTE]
-> Leave `.env_encoded` for now — it requires the service account key that Terraform creates next.
-
 ---
 
 ### Provision GCP with Terraform
@@ -278,9 +275,15 @@ Terraform creates everything: service account, GCS bucket, BigQuery dataset, and
 **Authenticate:**
 
 ```bash
+gcloud auth login
+gcloud config set project YOUR_GCP_PROJECT_ID
 gcloud auth application-default login
 gcloud auth application-default set-quota-project YOUR_GCP_PROJECT_ID
 ```
+
+
+> [!NOTE]
+> **Why login twice?** `gcloud auth login` authenticates your user account for gcloud CLI commands (like `gcloud storage` or `gcloud iam`). `gcloud auth application-default login` sets up Application Default Credentials (ADC) used by client libraries, SDKs, and Terraform's Google provider under the hood. Both are needed for local setup.
 
 **Configure tfvars:**
 
