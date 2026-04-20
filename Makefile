@@ -1,5 +1,5 @@
 .PHONY: env gcp-auth encode-env sa-key setup docker-up docker-down infra \
-        entsoe-ingest era5-ingest spark-transform dbt-run test clean
+        entsoe-ingest era5-ingest spark-transform dbt-run test
 
 # ── Environment ──────────────────────────────────────────────────────────────
 

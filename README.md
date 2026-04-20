@@ -105,7 +105,7 @@ To answer those questions reliably, the project builds a repeatable batch pipeli
 │   │   ├── backfill_pipeline.yaml  # manual historical replay, use this to populate data
 │   │   ├── dbt_quality.yaml
 │   │   ├── dbt_mart.yaml
-│   │   ├── gcp_kv_setup.yaml       # one-time KV bootstrap (automated by make kestra-bootstrap)
+│   │   ├── gcp_kv_setup.yaml       # one-time KV bootstrap (run manually from Kestra UI)
 │   │   └── gcp_setup.yaml          # creates GCS bucket + BQ dataset if they don't exist
 │   └── scripts/
 │       └── tasks/
@@ -116,6 +116,8 @@ To answer those questions reliably, the project builds a repeatable batch pipeli
 │   ├── scripts/
 │   │   ├── entsoe_to_parquet.py    # local reference only, production parsing runs in spark_transform.yaml
 │   │   └── era5_to_parquet.py      # local helper only, does not stamp a country column
+│   ├── notebooks/
+│   │   └── renewable_energy_local_spark.ipynb  # local SparkSession for dev/exploration
 │   └── utils/
 │       ├── entsoe_xml_parser.py
 │       └── era5_netcdf_helpers.py
@@ -200,7 +202,7 @@ make docker-up
 See [Start Kestra](#start-kestra) for the full instructions.
 
 - Flows load automatically. Go to `http://localhost:8080` → Flows → confirm the `european_energy` namespace is present.
-- Run `gcp_kv_setup` then `gcp_setup` to bootstrap KV config and GCP resources.
+- Before running `gcp_kv_setup`, edit the flow in the Kestra UI and replace the three placeholders (`YOUR_GCP_PROJECT_ID`, `YOUR_BUCKET_NAME`, `YOUR_GCP_REGION`) with your actual values. Then execute it, followed by `gcp_setup`.
 - Run the pipeline (backfill your date range): `backfill_pipeline` → Triggers tab → Execute backfill → pick date range and country.
 
 ---
@@ -382,12 +384,9 @@ Push KV config and create GCP resources using the two bootstrap flows:
    ![gcp_kv_setup flow](images/gcp_kv_setup.png)
 
 2. Open flow `gcp_setup` (Step 2 of 2) and execute it.
-   This creates the GCS bucket and BigQuery dataset. If you already ran Terraform, it skips creation safely (`ifExists: SKIP`). Still run it to confirm connectivity.
+   This creates the GCS bucket and BigQuery dataset. If you already ran Terraform, it skips creation safely (`ifExists: SKIP`). Run it regardless to confirm Kestra can reach GCP.
 
    ![gcp_setup flow](images/gcp_setup.png)
-
-> [!NOTE]
-> If you ran Terraform, skip `gcp_setup`. Bucket and dataset already exist. `gcp_setup` is only needed if you created GCP resources manually without Terraform.
 
 ---
 
@@ -449,16 +448,30 @@ For testing individual steps without Kestra:
 
 ```bash
 # Ingestion
-make entsoe-ingest   # reads COUNTRY, START_DATE, END_DATE from .env
+uv run python orchestration/scripts/tasks/entsoe_fetch.py   # reads COUNTRY, START_DATE, END_DATE from .env
+uv run python orchestration/scripts/tasks/era5_fetch.py
+# or via make:
+make entsoe-ingest
 make era5-ingest
 
-# dbt
-make dbt-run
-make test
+# dbt — install deps first if not done yet
+uv run dbt deps --project-dir transformations --profiles-dir transformations
 
-# Local Spark notebook (requires: uv sync --group notebook)
+uv run dbt seed --project-dir transformations --profiles-dir transformations
+uv run dbt run --project-dir transformations --profiles-dir transformations
+uv run dbt test --project-dir transformations --profiles-dir transformations
+# or via make:
+make dbt-run   # dbt run
+make test      # dbt test
+
+# Local Spark notebook
+# First install the notebook extras (JupyterLab + PySpark dependencies):
+uv sync --group notebook
+# Then launch the notebook:
 uv run --group notebook jupyter lab spark/notebooks/renewable_energy_local_spark.ipynb
 ```
+
+The notebook (`spark/notebooks/renewable_energy_local_spark.ipynb`) runs a local SparkSession against your `bronze/` and `silver/` directories. No Kestra or GCS required. It covers XML parsing, NetCDF flattening, Spark-side aggregation, and writes clean Parquet to `silver/notebook/`. Useful for exploring raw data or validating parse logic before pushing changes to the production Kestra flows.
 
 If your local `bronze/` is empty, sync a sample day from GCS first:
 
@@ -508,6 +521,7 @@ FROM `YOUR_GCP_PROJECT.european_energy.fct_renewable_kpi`;
 ```bash
 make env              # copy .env.example → .env
 make setup            # uv sync + dbt deps
+make gcp-auth         # authenticate gcloud CLI and ADC
 make infra            # terraform init + apply
 make sa-key           # download SA JSON key (after terraform apply)
 make encode-env       # generate .env_encoded from .env + service-account.json
