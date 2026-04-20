@@ -25,9 +25,9 @@ Data engineering platform that ingests European electricity grid data (ENTSO-E) 
   - [Provision GCP with Terraform](#provision-gcp-with-terraform)
   - [Start Kestra](#start-kestra)
   - [Run the pipeline](#run-the-pipeline)
-  - [View results in Looker Studio](#view-results-in-looker-studio)
-- [Local dev path](#local-dev-path)
-- [Verify your setup](#verify-your-setup)
+  - [Local dev path](#local-dev-path)
+  - [Dashboard](#dashboard)
+- [Quick commands reference](#quick-commands-reference)
 - [Cleanup and destroy](#cleanup-and-destroy)
 - [Contributing](#contributing)
 
@@ -453,24 +453,7 @@ To run steps individually instead:
 
 ---
 
-### View results in Looker Studio
-
-1. Go to https://lookerstudio.google.com/
-2. Create new report → data source → BigQuery
-3. Connect to `YOUR_GCP_PROJECT.european_energy.fct_renewable_kpi`
-4. Use the queries in `dashboard/queries/` as starting points
-
-Dashboard pages:
-- Latest generation mix by country and fuel type
-- Renewable ranking by share of total generation
-- Trends over time (daily/weekly/seasonal)
-- Weather correlation (wind speed, solar irradiance, temperature)
-- Grid carbon intensity
-- Forecast accuracy
-
----
-
-## Local dev path
+### Local dev path
 
 For testing individual steps without Kestra:
 
@@ -502,21 +485,27 @@ For dbt authentication locally, use one of:
 
 ---
 
-## Verify your setup
+### Dashboard
 
-```bash
-# Check Kestra flows are loaded
-curl -s http://localhost:8080/api/v1/flows/european_energy | python3 -c "import sys,json; flows=json.load(sys.stdin); [print(f['id']) for f in flows]"
+Full step-by-step instructions for building the Looker Studio report are in [`dashboard/looker-studio-guide.md`](dashboard/looker-studio-guide.md).
 
-# Warehouse sanity check (run in BigQuery console or bq CLI)
+**Quick start:**
+
+1. Go to https://lookerstudio.google.com/ → Create → Data Source → BigQuery
+2. Select your GCP project, dataset `european_energy`, connect and create report
+3. Use the SQL files in [`dashboard/queries/`](dashboard/queries/) as custom query data sources where needed
+
+The guide covers four report pages: Country Performance, Generation Mix, Weather Impact, and Carbon Intensity with exact chart types, dimensions, metrics, and style settings for each.
+
+Warehouse sanity check (run in BigQuery console or `bq` CLI):
+
+```sql
 SELECT
   MAX(date_key)      AS latest_date,
   SUM(total_mwh)     AS total_mwh,
   SUM(renewable_mwh) AS renewable_mwh
 FROM `YOUR_GCP_PROJECT.european_energy.fct_renewable_kpi`;
 ```
-
-At this point you should have BigQuery tables populated, and a Looker Studio report that loads data.
 
 ---
 
@@ -529,10 +518,7 @@ make infra            # terraform init + apply
 make sa-key           # download SA JSON key (after terraform apply)
 make encode-env       # generate .env_encoded from .env + service-account.json
 make docker-up        # start Kestra at localhost:8080
-# Then manually: upload flows via Kestra UI + run gcp_kv_setup then gcp_setup (see step-by-step setup)
-# Then manually: trigger backfill_pipeline in Kestra UI (see "Run the pipeline")
-make docker-down
-make clean
+make docker-down      # stop Kestra
 ```
 
 ---

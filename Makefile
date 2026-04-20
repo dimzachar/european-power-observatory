@@ -106,9 +106,3 @@ dbt-run:
 
 test:
 	uv run dbt test --project-dir transformations --profiles-dir transformations
-
-# ── Cleanup ──────────────────────────────────────────────────────────────────
-
-clean:
-	rm -rf bronze/* silver/*
-	find transformations/target -maxdepth 1 -not -name target -exec rm -rf {} +
